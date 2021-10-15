@@ -1,7 +1,7 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.10.3"}
         com.phronemophobic/membrane {:local/root "../membrane2"}
-        com.phronemophobic.membrane/skialib-macosx-aarch64 {:local/root "../membrane2/csource/macosx-aarch64"}
+        
         
         cnuernber/avclj {:local/root "../avclj"}
         cnuernber/dtype-next {;; :mvn/version "8.022"
@@ -10,6 +10,17 @@
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.0"}}}
+
+
+  :skia
+  {:extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:local/root "../membrane2/csource/macosx-aarch64"}
+                com.phronemophobic.membrane/skialib-macosx-x86_64 {:local/root "../membrane2/csource/macosx-x86-64"}
+                com.phronemophobic.membrane/skialib-linux-x86_64 {:local/root "../membrane2/csource/linux-x86-64"}}}
+
+  :cljfx
+  {:extra-deps {cljfx/cljfx {:mvn/version "RELEASE"}
+                org.openjfx/javafx-swing {:mvn/version "17.0.0.1"}}}
+
   :runner
   {:extra-deps {io.github.cognitect-labs/test-runner
                 {:git/url "https://github.com/cognitect-labs/test-runner"
