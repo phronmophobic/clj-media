@@ -1,11 +1,15 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.10.3"}
-        com.phronemophobic/membrane {:local/root "../membrane2"}
+        com.phronemophobic/membrane {:mvn/version "0.9.29.0-beta"}
         
         
-        cnuernber/avclj {:local/root "../avclj"}
-        cnuernber/dtype-next {;; :mvn/version "8.022"
-                              :local/root "../dtype-next"
+        cnuernber/avclj {;;:local/root "../avclj"
+                         :git/sha "fb8e0423b5c6ece57dc4b13fd3a265fbe0bbcd09"
+                         :sha "fb8e0423b5c6ece57dc4b13fd3a265fbe0bbcd09"
+                         :git/url "https://github.com/phronmophobic/avclj"
+                         }
+        cnuernber/dtype-next {:mvn/version "8.032"
+                              ;; :local/root "../dtype-next"
                               }}
  :aliases
  {:test {:extra-paths ["test"]
@@ -13,9 +17,9 @@
 
 
   :skia
-  {:extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:local/root "../membrane2/csource/macosx-aarch64"}
-                com.phronemophobic.membrane/skialib-macosx-x86_64 {:local/root "../membrane2/csource/macosx-x86-64"}
-                com.phronemophobic.membrane/skialib-linux-x86_64 {:local/root "../membrane2/csource/linux-x86-64"}}}
+  {:extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.29.0-beta"}
+                com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.29.0-beta"}
+                com.phronemophobic.membrane/skialib-linux-x86-64 {:mvn/version "0.9.29.0-beta"}}}
 
   :cljfx
   {:extra-deps {cljfx/cljfx {:mvn/version "RELEASE"}
