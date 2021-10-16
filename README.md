@@ -6,7 +6,9 @@ Using [avclj](https://github.com/cnuernber/avclj) for working with video.
 
 ### Generate test video
 
+```bash
 clojure -X:skia com.phronemophobic.clj-media.skia/gen-test-video
+```
 
 
 ### Play Video
