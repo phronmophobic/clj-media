@@ -45,36 +45,38 @@
         draw-lock (Object.)
 
         app-state (atom {:img nil})
-        _ (cljfx/run-app #'cljfx-video app-state)
-        repaint (fn []
-                  )]
+        start-time (System/currentTimeMillis)]
+
+    (cljfx/run-app #'cljfx-video app-state)
     (future
-      (loop[t 0]
-        (let [start-frame-time (System/currentTimeMillis)
-              frame-data (avclj/decode-frame! decoder)]
-          (when frame-data
-            (locking
-                (dtype/copy! (first (#'avclj/raw-frame->buffers frame-data))
-                             buffered-image))
-            (let [best-effort-timestamp (-> frame-data
-                                            meta
-                                            :best-effort-timestamp)
-                  elapsed (- start-frame-time (System/currentTimeMillis))
-                  sleep-ms (- (* 1000 fps (- best-effort-timestamp t))
-                              elapsed)]
-              (when (pos? sleep-ms)
-                (Thread/sleep sleep-ms))
+      (try
+       (loop[t 0]
+         (let [start-frame-time (System/currentTimeMillis)
+               frame-data (avclj/decode-frame! decoder)]
+           (when frame-data
+             (locking
+                 (dtype/copy! (first (#'avclj/raw-frame->buffers frame-data))
+                              buffered-image))
+             (let [best-effort-timestamp (-> frame-data
+                                             meta
+                                             :best-effort-timestamp)
+                   sleep-ms (- (* 1000 fps best-effort-timestamp)
+                               (- (System/currentTimeMillis) start-time ))]
+               (when (pos? sleep-ms)
+                 (Thread/sleep sleep-ms))
               
-              (swap! app-state assoc
-                     :video (map->VideoViewCljfx
-                             {:best-effort-timestamp best-effort-timestamp
-                              :buffered-image buffered-image
-                              :draw-lock draw-lock
-                              :width width
-                              :height height}))
-              (recur best-effort-timestamp)))))
-      
-      (.close decoder))))
+               (swap! app-state assoc
+                      :video (map->VideoViewCljfx
+                              {:best-effort-timestamp best-effort-timestamp
+                               :buffered-image buffered-image
+                               :draw-lock draw-lock
+                               :width width
+                               :height height}))
+               (recur best-effort-timestamp)))))
+       (catch Exception e
+         (println e))
+       (finally
+         (.close decoder))))))
 
 
 

@@ -72,34 +72,37 @@
                                :n @natom))
                       {:window-start-width width
                        :window-start-height height})
-        repaint (:membrane.skia/repaint window-info)]
+        repaint (:membrane.skia/repaint window-info)
+        start-time (System/currentTimeMillis)]
     (future
-      (loop [t 0]
-        (let [start-frame-time (System/currentTimeMillis)
-              frame-data (avclj/decode-frame! decoder)]
-          (when frame-data
-           (let [best-effort-timestamp (-> frame-data
-                                           meta
-                                           :best-effort-timestamp)
-                 elapsed (- start-frame-time (System/currentTimeMillis))
-                 sleep-ms (- (* 1000 fps (- best-effort-timestamp t))
-                             elapsed)]
+      (try
+        (loop [t 0]
+          (let [start-frame-time (System/currentTimeMillis)
+                frame-data (avclj/decode-frame! decoder)]
+            (when frame-data
+              (let [best-effort-timestamp (-> frame-data
+                                              meta
+                                              :best-effort-timestamp)
+                    sleep-ms (- (* 1000 fps best-effort-timestamp)
+                                (- (System/currentTimeMillis) start-time ))]
 
-             (when (pos? sleep-ms)
-               (Thread/sleep sleep-ms))
+                (when (pos? sleep-ms)
+                  (Thread/sleep sleep-ms))
 
-             (locking draw-lock
-               (skia-bgra8888-draw resource
-                                   (Pointer. (:data frame-data))
-                                   width
-                                   height
-                                   (:linesize frame-data)))
-             (swap! natom inc)
-             (repaint)
+                (locking draw-lock
+                  (skia-bgra8888-draw resource
+                                      (Pointer. (:data frame-data))
+                                      width
+                                      height
+                                      (:linesize frame-data)))
+                (swap! natom inc)
+                (repaint)
 
-             (recur best-effort-timestamp)))))
-
-      (.close decoder))))
+                (recur best-effort-timestamp)))))
+        (catch Exception e
+          (println e))
+        (finally
+          (.close decoder))))))
 
 
 (defn write-video [fname frames
