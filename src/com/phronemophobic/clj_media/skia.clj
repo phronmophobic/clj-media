@@ -105,6 +105,18 @@
           (.close decoder))))))
 
 
+(comment
+  (def encoder (avclj/make-video-encoder
+                100 100
+                "foo.mp4"
+                (merge
+                 {:input-pixfmt "AV_PIX_FMT_BGRA"
+                  :fps-numerator 60
+                  :fps-denominator 1})))
+
+  (def decoder (avclj/make-video-decoder "my-movie.mp4"))
+  ,)
+
 (defn write-video [fname frames
                    width height
                    &
@@ -157,6 +169,15 @@
                 ;; palettegen filter
                 :encoder-name codec-ids/AV_CODEC_ID_GIF
                 :encoder-pixfmt "AV_PIX_FMT_RGB8"}))
+(comment
+  (write-gif "my-filter.gif"
+             (map (fn [i]
+                    (ui/padding 10 (ui/label (str "frame: " i))))
+                    (range 120))
+               200 600)
+
+  ,)
+
 
 (defn -main [fname]
   (play-video fname))
