@@ -124,7 +124,7 @@
   
 
   (with-open [encoder (avclj/make-video-encoder
-                       width height
+                       height width
                        fname
                        (merge
                         {:input-pixfmt "AV_PIX_FMT_BGRA"
