@@ -2,6 +2,10 @@
 
 A basic example of creating gifs using clj-media.
 
+![repl](repl.gif?raw=true)
+
+![repl-gif-source](repl-gif-code.gif?raw=true)
+
 ## Usage
 
 See the docs for `code-to-gif/make-code-gif` and `code-to-gif/repl-to-gif` for programmtic usage.
