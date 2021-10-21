@@ -149,16 +149,16 @@
     (doseq [[i frame-elem] (map-indexed vector frames)]
       (let [input-frame (avclj/get-input-frame encoder)
             skia-resource (skia-direct-bgra8888-buffer (Pointer. (:data input-frame))
-                                                      (:width input-frame)
-                                                      (:height input-frame)
-                                                      (:linesize input-frame))]
+                                                       (:width input-frame)
+                                                       (:height input-frame)
+                                                       (:linesize input-frame))]
         (binding [skia/*skia-resource* skia-resource
                   skia/*image-cache* (atom {})
                   skia/*already-drawing* true]
           (#'skia/skia_clear skia-resource)
           (skia/draw frame-elem)
-          (#'skia/skia_flush skia-resource)))
-      (avclj/encode-frame! encoder i))))
+          (#'skia/skia_flush skia-resource))
+        (avclj/encode-frame! encoder input-frame)))))
 
 
 (defn write-gif [fname frames width height]
