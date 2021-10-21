@@ -6,6 +6,8 @@ Uses [avclj](https://github.com/cnuernber/avclj) under the hood.
 
 ## Usage
 
+You must have libavcodec installed to use this library.
+
 ### Dependency
 
 Currently only available via git dep.
