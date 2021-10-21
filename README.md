@@ -1,8 +1,14 @@
 # clj-media
 
-Using [avclj](https://github.com/cnuernber/avclj) for working with video.
+View or create videos and gifs with clojure.
+
+Uses [avclj](https://github.com/cnuernber/avclj) under the hood.
 
 ## Usage
+
+### Generating gifs
+
+See (examples/codetogif).
 
 ### Generate test video
 
@@ -10,6 +16,7 @@ Using [avclj](https://github.com/cnuernber/avclj) for working with video.
 clojure -X:skia com.phronemophobic.clj-media.skia/gen-test-video
 ```
 
+Note: currently only skia supported.
 
 ### Play Video
 
