@@ -13,6 +13,8 @@ clojure -X:skia com.phronemophobic.clj-media.skia/gen-test-video
 
 ### Play Video
 
+Open a window and start playing a video.
+
 #### Skia
 
 ```bash
@@ -33,7 +35,7 @@ clojure:cljfx -M -m com.phronemophobic.clj-media.cljfx my-movie.mp4
 
 ## Status
 
-Working examples for skia, swing, and cljfx. A reasonable API is still a WIP.
+Working examples for skia, swing, and cljfx. A reasonable API is still a WIP. Currently, only video works, but future support for audio is intended.
 
 ## License
 
