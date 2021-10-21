@@ -164,11 +164,13 @@
 (defn write-gif [fname frames width height]
   (write-video fname frames
                width height
-               {:fps-numerator 24
+               {:fps-numerator 48
                 ;; need to figure out how to use
                 ;; palettegen filter
                 :encoder-name codec-ids/AV_CODEC_ID_GIF
-                :encoder-pixfmt "AV_PIX_FMT_RGB8"}))
+                :encoder-pixfmt "AV_PIX_FMT_PAL8"
+                }))
+
 (comment
   (write-gif "my-filter.gif"
              (map (fn [i]
