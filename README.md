@@ -6,6 +6,14 @@ Uses [avclj](https://github.com/cnuernber/avclj) under the hood.
 
 ## Usage
 
+### Dependency
+
+Currently only available via git dep.
+```clojure
+com.phronemophobic/clj-media {:git/sha "50e9e5d887cabf07a8d125c1dae573ba31a402bd"
+                              :git/url "https://github.com/phronmophobic/clj-media"}
+```
+
 ### Generating gifs
 
 See [examples/codetogif](examples/codetogif).
