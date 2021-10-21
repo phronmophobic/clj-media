@@ -44,7 +44,7 @@
         (skia_draw_surface skia/*skia-resource* resource)))))
 
 (defn play-video
-  "given a filename. play the video until it's done"
+  "Open a window and play the video found at `fname`."
   [fname]
   (avclj/initialize!)
   (let [decoder
@@ -117,20 +117,25 @@
   (def decoder (avclj/make-video-decoder "my-movie.mp4"))
   ,)
 
-(defn write-video [fname frames
-                   width height
-                   &
-                   [{:keys [encoder-name
-                            encoder-pixfmt
-                            fps-numerator
-                            fps-denominator]
-                     
-                     :or {encoder-name codec-ids/AV_CODEC_ID_H264
-                          fps-numerator 60
-                          fps-denominator 1
-                          }
-                     :as opts}]
-                   ]
+(defn write-video
+  "Save a video to `fname`.
+
+  `fname`: A string path to where the video should be written.
+  `frames`: A sequence of membrane views, one for each frame.
+  `width`: Width of the gif in pixels.
+  `height`: Height of the gif in pixels.
+  `opts`: Optional parameters to pass to `avclj/make-video-encoder`."
+  [fname frames
+   width height
+   &
+   [{:keys [encoder-name
+            encoder-pixfmt
+            fps-numerator
+            fps-denominator]
+     :or {encoder-name codec-ids/AV_CODEC_ID_H264
+          fps-numerator 60
+          fps-denominator 1}
+     :as opts}]]
 
   (avclj/initialize!)
   
@@ -161,22 +166,31 @@
         (avclj/encode-frame! encoder input-frame)))))
 
 
-(defn write-gif [fname frames width height]
-  (write-video fname frames
-               width height
-               {:fps-numerator 48
-                ;; need to figure out how to use
-                ;; palettegen filter
-                :encoder-name codec-ids/AV_CODEC_ID_GIF
-                :encoder-pixfmt "AV_PIX_FMT_PAL8"
-                }))
+(defn write-gif
+  "Save a gif to `fname`.
+
+  `fname`: A string path to where the gif should be written.
+  `frames`: A sequence of membrane views, one for each frame.
+  `width`: Width of the gif in pixels.
+  `height`: Height of the gif in pixels.
+  `opts`: Optional parameters to pass to `avclj/make-video-encoder`."
+  ([fname frames width height opts]
+   (write-video fname frames
+                width height
+                (merge {:fps-numerator 48
+                        :encoder-name codec-ids/AV_CODEC_ID_GIF
+                        :encoder-pixfmt "AV_PIX_FMT_PAL8"}
+                       opts)))
+  ([fname frames width height]
+   (write-gif fname frames width height nil)))
 
 (comment
   (write-gif "my-filter.gif"
              (map (fn [i]
                     (ui/padding 10 (ui/label (str "frame: " i))))
                     (range 120))
-               200 600)
+             200 200
+             {:fps-numerator 24})
 
   ,)
 

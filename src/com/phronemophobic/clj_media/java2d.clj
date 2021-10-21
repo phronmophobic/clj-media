@@ -8,6 +8,7 @@
             ))
 
 (defn play-video [fname]
+  "Open a window and play the video found at `fname`."
   (avclj/initialize!)
   (let [decoder
         (avclj/make-video-decoder fname)

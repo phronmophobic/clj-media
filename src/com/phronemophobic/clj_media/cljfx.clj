@@ -31,7 +31,9 @@
 (membrane.component/defui cljfx-video [{:keys [video]}]
   video)
 
-(defn play-video [fname]
+(defn play-video
+  "Open a window and play the video found at `fname`."
+  [fname]
   (avclj/initialize!)
   (let [decoder
         (avclj/make-video-decoder fname)
