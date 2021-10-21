@@ -8,7 +8,7 @@ Uses [avclj](https://github.com/cnuernber/avclj) under the hood.
 
 ### Generating gifs
 
-See (examples/codetogif).
+See [examples/codetogif](examples/codetogif).
 
 ### Generate test video
 
