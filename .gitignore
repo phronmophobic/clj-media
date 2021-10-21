@@ -13,3 +13,7 @@
 /.socket-repl-port
 .hgignore
 .hg/
+*.mov
+*.mp4
+*.gif
+hs_err_pid*.log
