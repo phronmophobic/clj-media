@@ -8,7 +8,7 @@ A basic example of creating gifs using clj-media.
 
 ## Usage
 
-See the docs for `code-to-gif/make-code-gif` and `code-to-gif/repl-to-gif` for programmtic usage.
+See the docs for `code-to-gif/make-code-gif` and `code-to-gif/repl-to-gif` for programmatic usage.
 
 ### Cli example
 
