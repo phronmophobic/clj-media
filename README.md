@@ -47,7 +47,7 @@ clojure -M -m com.phronemophobic.clj-media.java2d my-movie.mp4
 #### Cljfx
 
 ```bash
-clojure:cljfx -M -m com.phronemophobic.clj-media.cljfx my-movie.mp4
+clojure -M:cljfx -m com.phronemophobic.clj-media.cljfx my-movie.mp4
 ```
 
 ## Status
