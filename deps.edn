@@ -6,7 +6,7 @@
         
         
         cnuernber/avclj {;;:local/root "../avclj"
-                         :git/sha "a1f692dfcdea4a77643bfb6ed82985840bce6c02"
+                         :git/sha "bc7c82bea77bfd7d58efe0c609c72c163e889a9a"
                          :git/url "https://github.com/phronmophobic/avclj"
                          }
         cnuernber/dtype-next {:mvn/version "8.033"
