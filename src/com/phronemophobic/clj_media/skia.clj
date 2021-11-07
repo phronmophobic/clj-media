@@ -28,7 +28,7 @@
 
 (skia/defc skia_draw_surface skia/membraneskialib Void/TYPE [destination source])
 
-(defrecord VideoView [n resource buffer width height draw-lock]
+(defrecord VideoView [n resource width height draw-lock]
   ui/IOrigin
   (-origin [_]
     [0 0])
