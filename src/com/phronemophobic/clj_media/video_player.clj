@@ -17,7 +17,7 @@
 (defn repaint! []
   (#'skia/glfw-post-empty-event))
 
-(defn video-thread [fname key repaint!]
+(defn video-thread [fname repaint!]
   (avclj/initialize!)
   (let [control-ch (async/chan)]
     (async/thread
@@ -60,7 +60,6 @@
                                           :priority true)]
               (if (= port control-ch)
                 (do
-                  (prn "control: " val)
                   (case (:op val)
                     :play
                     (if playing?
@@ -230,42 +229,40 @@
     ;; return control ch
     control-ch))
 
-(defonce vthreads (atom {}))
+(defeffect ::init-video-resources [fname $video-resources]
+  (dispatch! :update
+             $video-resources
+             (fn [video-resources]
+               (if (:chan video-resources)
+                 video-resources
+                 (assoc video-resources
+                        :chan
+                        (delay
+                          (video-thread fname
+                                        (fn [video-resources]
+                                          (dispatch! :update $video-resources merge video-resources)
+                                          (repaint!))))))))
+  nil)
 
-(defn get-vthread [fname key repaint!]
-  (let [k [fname key]
-        m (swap! vthreads
-                 (fn [m]
-                   (if-let [x (get m k)]
-                     m
-                     (assoc m k
-                            (delay
-                              (video-thread fname key repaint!))))))]
-    @(get m k)))
-
-(defeffect ::pause [fname key $video-resources]
-  (let [ch (get-vthread fname key
-                        (fn [video-resources]
-                          (dispatch! :set $video-resources video-resources)
-                          (repaint!)))]
+(defeffect ::pause [fname $video-resources]
+  (dispatch! ::init-video-resources fname $video-resources)
+  (let [ch (-> (dispatch! :get $video-resources)
+               :chan
+               deref)]
     (async/put! ch {:op :pause})))
 
-(defeffect ::play [fname key $video-resources]
-  (let [ch (get-vthread fname key
-                        (fn [video-resources]
-                          (dispatch! :set $video-resources video-resources)
-                          (repaint!)))]
+(defeffect ::play [fname $video-resources]
+  (dispatch! ::init-video-resources fname $video-resources)
+  (let [ch (-> (dispatch! :get $video-resources)
+               :chan
+               deref)]
     (async/put! ch {:op :play})))
 
-
-
-(defonce seek-diffs (atom [] ))
-
-(defeffect ::seek-to [fname key $video-resources pct]
-  (let [ch (get-vthread fname key
-                        (fn [video-resources]
-                          (dispatch! :set $video-resources video-resources)
-                          (repaint!)))]
+(defeffect ::seek-to [fname $video-resources pct]
+  (dispatch! ::init-video-resources fname $video-resources)
+  (let [ch (-> (dispatch! :get $video-resources)
+               :chan
+               deref)]
     (async/put! ch {:op :seek
                     :seek-percent pct})))
 
@@ -283,11 +280,12 @@
 
 (defui video-player [{:keys [fname
                              video-resources
-                             key
                              width
                              height]}]
   (ui/vertical-layout
-   (if video-resources
+   (if (and video-resources
+            (:width video-resources)
+            (:height video-resources))
      (let [vid (media/map->VideoView
                 video-resources)
            scaled-vid (aspect-fit vid
@@ -297,7 +295,7 @@
         (ui/on
          :mouse-down
          (fn [[x _y]]
-           [[::seek-to fname key $video-resources (/ x w)]])
+           [[::seek-to fname $video-resources (/ x w)]])
          (ui/filled-rectangle [0.5 0.5 0.5 0.5]
                               w 40))])
      (ui/label "press play to see something"))
@@ -305,11 +303,11 @@
     (basic/button {:text "Play"
                    :on-click
                    (fn []
-                     [[::play fname key $video-resources]])})
+                     [[::play fname $video-resources]])})
     (basic/button {:text "Pause"
                    :on-click
                    (fn []
-                     [[::pause fname key $video-resources]])})))
+                     [[::pause fname $video-resources]])})))
   )
 
 
