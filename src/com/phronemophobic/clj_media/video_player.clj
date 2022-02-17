@@ -19,7 +19,7 @@
 
 (defn video-thread [fname repaint!]
   (avclj/initialize!)
-  (let [control-ch (async/chan)]
+  (let [control-ch (async/chan (async/sliding-buffer 1))]
     (async/thread
 
 
