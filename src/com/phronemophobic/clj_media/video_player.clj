@@ -247,7 +247,9 @@
                         (delay
                           (video-thread fname
                                         (fn [video-resources]
-                                          (dispatch! :update $video-resources merge video-resources)
+                                          (if video-resources
+                                            (dispatch! :update $video-resources merge video-resources)
+                                            (dispatch! :delete $video-resources))
                                           (repaint!))))))))
   nil)
 
@@ -258,12 +260,25 @@
                deref)]
     (async/put! ch {:op :pause})))
 
+(defeffect ::stop [$video-resources]
+  (when-let [ch (some-> (dispatch! :get $video-resources)
+                        :chan
+                        deref)]
+    (async/put! ch {:op :stop})))
+
 (defeffect ::play [fname $video-resources]
   (dispatch! ::init-video-resources fname $video-resources)
   (let [ch (-> (dispatch! :get $video-resources)
                :chan
                deref)]
     (async/put! ch {:op :play})))
+
+(defeffect ::toggle-play [fname $video-resources]
+  (dispatch! ::init-video-resources fname $video-resources)
+  (let [ch (-> (dispatch! :get $video-resources)
+               :chan
+               deref)]
+    (async/put! ch {:op :toggle-play})))
 
 (defeffect ::seek-to [fname $video-resources pct]
   (dispatch! ::init-video-resources fname $video-resources)
@@ -287,6 +302,7 @@
 
 (defui video-player [{:keys [fname
                              video-resources
+                             mouse-down?
                              width
                              height]}]
   (ui/vertical-layout
@@ -299,12 +315,25 @@
                                   width height)
            [w h] (ui/bounds scaled-vid)]
        [scaled-vid
-        (ui/on
-         :mouse-down
-         (fn [[x _y]]
-           [[::seek-to fname $video-resources (/ x w)]])
-         (ui/filled-rectangle [0.5 0.5 0.5 0.5]
-                              w 40))])
+        (let [mdown? (get extra :mdown?)]
+          (ui/on
+           :mouse-move
+           (fn [[x _y]]
+             (when mdown?
+               [[::seek-to fname $video-resources (/ x w)]]))
+           :mouse-up
+           (fn [[x _y]]
+             [[:set $mdown? false]
+              [::seek-to fname $video-resources (/ x w)]
+              [::play fname $video-resources][::play fname $video-resources]])
+           :mouse-down
+           (fn [[x _y]]
+             [[::pause fname $video-resources]
+              [::seek-to fname $video-resources (/ x w)]
+              [:set $mdown? true]
+              ])
+           (ui/filled-rectangle [0.5 0.5 0.5 0.5]
+                                w 40)))])
      (ui/label "press play to see something"))
    (ui/horizontal-layout
     (basic/button {:text "Play"
