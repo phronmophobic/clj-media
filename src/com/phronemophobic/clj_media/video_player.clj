@@ -59,8 +59,13 @@
                                             [control-ch])
                                           :priority true)]
               (if (= port control-ch)
-                (do
-                  (case (:op val)
+                (let [op (:op val)
+                      op (if (= :toggle-play op)
+                           (if playing?
+                             :pause
+                             :play)
+                           op)]
+                  (case op
                     :play
                     (if playing?
                       ;; we're already playing
