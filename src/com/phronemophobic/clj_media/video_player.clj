@@ -219,11 +219,13 @@
             (prn e))
           (finally
             (repaint!
-             {:n -1
-              :resource nil
-              :width width
-              :height height
-              :draw-lock draw-lock})
+             nil
+             #_{:n -1
+                :resource nil
+                :width width
+                :height height
+                :chan nil
+                :draw-lock nil})
 
             (when decoder
               (.close decoder))
