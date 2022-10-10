@@ -1,14 +1,18 @@
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.10.3"}
-        com.phronemophobic/membrane {:mvn/version "0.9.29.0-beta"
+        com.phronemophobic/membrane {:mvn/version "0.10.1-beta"
                                      
                                      }
         
 
         mogenslund/liquid {:mvn/version "2.0.3"}
 
-        com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.30.0-beta"}
-        com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.30.0-beta"}
-        com.phronemophobic.membrane/skialib-linux-x86-64 {:mvn/version "0.9.30.0-beta"}
+        com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}
+        com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.31.0-beta"}
+        com.phronemophobic.membrane/skialib-linux-x86-64 {:mvn/version "0.9.31.0-beta"}
 
-        com.phronemophobic/clj-media {:local/root "../../"}}}
+        com.phronemophobic/clj-media {:local/root "../../"}}
+
+ :aliases
+ {:project
+  {:jvm-opts ["-Djava.library.path=/opt/local/lib"]}}}

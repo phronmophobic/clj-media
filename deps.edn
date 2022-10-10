@@ -1,6 +1,6 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.10.3"}
-        com.phronemophobic/membrane {:mvn/version "0.9.29.0-beta"
+        com.phronemophobic/membrane {:mvn/version "0.10.1-beta"
                                      ;; :local/root "../membrane2"
                                      }
         
@@ -14,17 +14,20 @@
                               }
 
         ;; org.craigandera/dynne {:mvn/version "0.4.1"}
-
-        com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.30.0-beta"}}
+        }
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.0"}}}
 
 
+  :project
+  {:jvm-opts ["-Djava.library.path=/opt/local/lib"]
+   :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}}}
+
   :skia
-  {:extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.30.0-beta"}
-                com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.30.0-beta"}
-                com.phronemophobic.membrane/skialib-linux-x86-64 {:mvn/version "0.9.30.0-beta"}}}
+  {:extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}
+                com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.31.0-beta"}
+                com.phronemophobic.membrane/skialib-linux-x86-64 {:mvn/version "0.9.31.0-beta"}}}
 
   :cljfx
   {:extra-deps {cljfx/cljfx {:mvn/version "RELEASE"}
