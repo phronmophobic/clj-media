@@ -12,7 +12,7 @@ You must have libavcodec installed to use this library.
 
 Currently only available via git dep.
 ```clojure
-com.phronemophobic/clj-media {:git/sha "50e9e5d887cabf07a8d125c1dae573ba31a402bd"
+com.phronemophobic/clj-media {:git/sha "53a3c2015af973ec67dec036e08086cfac0d2107"
                               :git/url "https://github.com/phronmophobic/clj-media"}
 ```
 
