@@ -29,6 +29,23 @@
                 com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.31.0-beta"}
                 com.phronemophobic.membrane/skialib-linux-x86-64 {:mvn/version "0.9.31.0-beta"}}}
 
+  :skija {
+          :extra-deps {org.jetbrains.skija/skija-macos-arm64 {:mvn/version "0.93.4"}
+                       org.jetbrains.skija/skija-macos-x64 {:mvn/version "0.93.4"}
+                       org.jetbrains.skija/skija-linux {:mvn/version "0.93.1"}
+                       org.lwjgl/lwjgl {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl$natives-macos {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl$natives-macos-arm64 {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl$natives-linux {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-glfw {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-glfw$natives-macos {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-glfw$natives-macos-arm64 {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-glfw$natives-linux {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-opengl {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-opengl$natives-macos {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-opengl$natives-macos-arm64 {:mvn/version "3.3.0"}
+                       org.lwjgl/lwjgl-opengl$natives-linux {:mvn/version "3.3.0"}}}
+
   :cljfx
   {:extra-deps {cljfx/cljfx {:mvn/version "RELEASE"}
                 org.openjfx/javafx-swing {:mvn/version "17.0.0.1"}}}
