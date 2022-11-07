@@ -13,7 +13,7 @@
                               ;; :local/root "../dtype-next"
                               }
 
-        com.phronemophobic/clong {:local/root "../clong"}
+        com.phronemophobic/clong {:mvn/version "0.9.0"}
         ;; org.craigandera/dynne {:mvn/version "0.4.1"}
 
         }
