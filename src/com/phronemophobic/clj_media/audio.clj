@@ -174,7 +174,7 @@
                   0 num-streams))
 
     (def stream (aget streams best-stream))
-    (def stream+ (Structure/newInstance com.phronemophobic.clj_media.audio.structs.AVStreamByReference
+    (def stream+ (Structure/newInstance AVStreamByReference
                                         stream))
 
     (.readField stream+ "codecpar")
@@ -451,7 +451,7 @@
                  (.readField format-context "streams")
                  0 num-streams)
         stream (aget streams best-stream)
-        stream+ (Structure/newInstance com.phronemophobic.clj_media.audio.structs.AVStreamByReference
+        stream+ (Structure/newInstance AVStreamByReference
                                        stream)
         codec-parameters (.readField stream+ "codecpar")
         codec-id (.readField codec-parameters "codec_id" )
