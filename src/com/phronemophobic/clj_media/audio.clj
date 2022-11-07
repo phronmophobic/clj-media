@@ -136,12 +136,6 @@
 
 
 (defonce generated-api (gen/def-api lib av-api))
-(import '(com.phronemophobic.clj_media.audio.structs
-          AVRational
-          AVFormatContextByReference
-          AVOutputFormatByReference
-          AVIOContextByReference
-          AVFrameByReference))
 
 (defn error->str [err]
   (let [buf (byte-array 255)]
