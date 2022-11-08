@@ -25,7 +25,8 @@
   :project
   {:jvm-opts ["-Djava.library.path=/opt/local/lib"
               "-Djna.library.path=../llvm-project/build/out/lib:/opt/local/lib"]
-   :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}}}
+   :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}
+                com.phronemophobic/clong {:local/root "../clong"}}}
 
   :skia
   {:extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}
