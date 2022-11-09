@@ -1,6 +1,5 @@
 (ns com.phronemophobic.clj-media.audio
   (:require [clojure.java.io :as io]
-            [com.phronemophobic.clong.gen.jna :as gen]
             [com.phronemophobic.clj-media.av :as av]
             [com.phronemophobic.clj-media.av.raw :as raw
              :refer :all]
