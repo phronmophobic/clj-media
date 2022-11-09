@@ -104,3 +104,30 @@
                (reduced {:error-code err
                          :error-msg (av/error->str err)
                          :type :transcode-error})))))))))
+
+(defmacro with-tile [[tile-bind img] & body]
+  `(let [img# ~img
+         ~tile-bind (.getWritableTile img# 0 0)]
+     (try
+       ~@body
+       (finally
+         (.releaseWritableTile img# 0 0)))))
+
+(defn render-frame
+  "Writes an AVFrame into a BufferedImage. Assumes :byte-bgr image format."
+  [img frame]
+  (let [
+        width (.readField frame "width")
+        height (.readField frame "height")
+        linesize (-> frame
+                     (.readField "linesize")
+                     (nth 0))
+        buf-ptr (-> frame
+                    (.readField "data")
+                    (nth 0)
+                    (.getPointer))]
+
+    (with-tile [wraster img]
+      (doseq [y (range height)]
+        (.setDataElements wraster 0 y width 1
+                          (.getByteArray buf-ptr (* linesize y) linesize))))))

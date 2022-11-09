@@ -20,33 +20,6 @@
 
 (raw/import-structs!)
 
-(defmacro with-tile [[tile-bind img] & body]
-  `(let [img# ~img
-         ~tile-bind (.getWritableTile img# 0 0)]
-     (try
-       ~@body
-       (finally
-         (.releaseWritableTile img# 0 0)))))
-
-(defn write-frame
-  "Writes an AVFrame into a BufferedImage. Assumes :byte-bgr image format."
-  [img frame]
-  (let [
-        width (.readField frame "width")
-        height (.readField frame "height")
-        linesize (-> frame
-                     (.readField "linesize")
-                     (nth 0))
-        buf-ptr (-> frame
-                    (.readField "data")
-                    (nth 0)
-                    (.getPointer))]
-
-    (with-tile [wraster img]
-      (doseq [y (range height)]
-        (.setDataElements wraster 0 y width 1
-                          (.getByteArray buf-ptr (* linesize y) linesize))))))
-
 (defn play-video [fname]
   "Open a window and play the video found at `fname`."
   ;; (avclj/initialize!)
@@ -93,7 +66,7 @@
                               (- (System/currentTimeMillis) start-time ))]
               (when (pos? sleep-ms)
                 (Thread/sleep sleep-ms))
-              (write-frame buffered-image frame)
+              (video/render-frame buffered-image frame)
 
               (repaint)
 
