@@ -14,10 +14,13 @@
    com.sun.jna.ptr.PointerByReference
    com.sun.jna.ptr.IntByReference
    com.sun.jna.ptr.ByteByReference
+   java.lang.ref.Cleaner
    com.sun.jna.Structure)
   (:gen-class))
 
 (raw/import-structs!)
+
+(def cleaner (Cleaner/create))
 
 (defonce handles (atom #{}))
 (defn ref! [o]
@@ -44,6 +47,36 @@
   (averror-eagains err))
 (defn einvalid? [err]
   (= err AVERROR_INVALIDDATA))
+
+
+
+
+(defn next-packet [ctx]
+  (let [packet (av_packet_alloc)
+        ptr (Pointer/nativeValue (.getPointer packet))]
+    (.register cleaner packet
+               (fn []
+                 (av_packet_free
+                  (doto (PointerByReference.)
+                    (.setValue (Pointer. ptr))))))
+    (let [err (av_read_frame (.getPointer ctx) packet)
+            result (cond
+                     (zero? err)
+                     packet
+
+                     (eof? err)
+                     nil
+
+                     :else ;; some other error
+                     (throw (ex-info "Error reading packet"
+                                     {:error-code err
+                                      :type :read-error})))]
+        result)))
+
+(defn packet-seq [ctx]
+  (when-let [packet (next-packet ctx)]
+    (cons packet (lazy-seq (packet-seq ctx)))))
+
 
 (defn read-frame [rf]
   (let [packet (av_packet_alloc)]
@@ -80,94 +113,91 @@
 
 (defn decode-frame [decoder-context]
   (fn [rf]
-    (let [frame (av_frame_alloc)]
-      (fn
-        ;; init
-        ([]
-          (rf))
-        ;; completion
-        ([result]
-         (av_frame_free (doto (PointerByReference.)
-                          (.setValue (.getPointer frame))))
-         (rf result))
-        ;; step
-        ([result packet]
-         (let [err (avcodec_send_packet decoder-context packet)
-               result
-               (if (and (not (zero? err))
-                        (not= err -22)
-                        (eagain? err))
-                 (reduced {:error-code err
-                           :type :send-packet-failure})
-                 (loop [result result]
-                   (assert frame)
-                   (let [err (avcodec_receive_frame decoder-context frame)]
-                     (cond
-                       (or (zero? err)
-                           (einvalid? err))
-                       (let [result (rf result frame)]
-                         (if (reduced? result)
-                           result
-                           (recur result)))
+    (let [frame (av_frame_alloc)
+          ptr (Pointer/nativeValue (.getPointer frame))]
+      (.register cleaner frame
+                 (fn []
+                   (av_frame_free
+                    (doto (PointerByReference.)
+                      (.setValue (Pointer. ptr))))))
+      (completing
+       (fn
+         ([result packet]
+          (let [err (avcodec_send_packet decoder-context packet)
+                result
+                (if (and (not (zero? err))
+                         (not= err -22)
+                         (eagain? err))
+                  (reduced {:error-code err
+                            :type :send-packet-failure})
+                  (loop [result result]
+                    (assert frame)
+                    (let [err (avcodec_receive_frame decoder-context frame)]
+                      (cond
+                        (or (zero? err)
+                            (einvalid? err))
+                        (let [result (rf result frame)]
+                          (if (reduced? result)
+                            result
+                            (recur result)))
 
-                       (eagain? err)
-                       result
-                       
-                       (eof? err)
-                       (reduced result)
+                        (eagain? err)
+                        result
 
-                       ;; some other error
-                       :else
-                       (reduced {:error-code err
-                                 :error-msg (error->str err)
-                                 :type :decode-error})))))]
-           result))))))
+                        (eof? err)
+                        (reduced result)
+
+                        ;; some other error
+                        :else
+                        (reduced {:error-code err
+                                  :error-msg (error->str err)
+                                  :type :decode-error})))))]
+            result)))))))
 
 
 
 (defn encode-frame [encoder-context]
   (fn [rf]
-    (let [packet (av_packet_alloc)]
-      (fn
-        ;; init
-        ([]
-         (rf))
-        ;; completion
-        ([result]
-         (av_packet_free (doto (PointerByReference.)
-                           (.setValue (.getPointer packet))))
-         (rf result))
-        ;; step
-        ([result frame]
-         (let [err (avcodec_send_frame encoder-context frame)
-               result
-               (if (and (not (zero? err))
-                        (not= err -22)
-                        (eagain? err))
-                 (reduced {:error-code err
-                           :type :send-packet-failure})
-                 (loop [result result]
-                   (let [err (avcodec_receive_packet encoder-context packet)]
-                     (cond
-                       (or (zero? err)
-                           (einvalid? err))
-                       (let [result (rf result packet)]
-                         (if (reduced? result)
-                           result
-                           (recur result)))
+    (let [packet (av_packet_alloc)
+          ptr (Pointer/nativeValue (.getPointer packet))]
+      (.register cleaner packet
+                 (fn []
+                   (av_packet_free
+                    (doto (PointerByReference.)
+                      (.setValue (Pointer. ptr))))))
+      (completing
+       (fn
+         ;; step
+         ([result frame]
+          (let [err (avcodec_send_frame encoder-context frame)
+                result
+                (if (and (not (zero? err))
+                         (not= err -22)
+                         (eagain? err))
+                  (reduced {:error-code err
+                            :type :send-packet-failure})
+                  (loop [result result]
+                    (let [err (avcodec_receive_packet encoder-context packet)]
+                      (cond
+                        (or (zero? err)
+                            (einvalid? err))
+                        (let [result (rf result packet)]
+                          (if (reduced? result)
+                            result
+                            (recur result)))
 
-                       (eagain? err)
-                       result
+                        (eagain? err)
+                        result
                        
-                       (eof? err)
-                       (reduced result)
+                        (eof? err)
+                        (reduced result)
 
-                       ;; some other error
-                       :else
-                       (reduced {:error-code err
-                                 :error-msg (error->str err)
-                                 :type :encode-error})))))]
-           result))))))
+                        ;; some other error
+                        :else
+                        (reduced {:error-code err
+                                  :error-msg (error->str err)
+                                  :type :encode-error})))))]
+            result)))))))
 
 (defn write-packet [output-format-context]
   (let [err (avformat_write_header output-format-context nil)]
@@ -250,6 +280,7 @@
         stream (aget streams best-stream)
         stream+ (Structure/newInstance AVStreamByReference
                                        stream)
+
         codec-parameters (.readField stream+ "codecpar")
         codec-id (.readField codec-parameters "codec_id" )
         decoder (avcodec_find_decoder codec-id)
@@ -257,9 +288,15 @@
             (throw (ex-info "Could not find decoder"
                             {:codec-id codec-id})))
         decoder-context (avcodec_alloc_context3 (.getPointer decoder))
+
         _ (when (nil? decoder-context)
             (throw (ex-info "Could not allocate decoder"
-                            {})))]
+                            {})))
+
+        _ (doto decoder-context
+            (.writeField "time_base"
+                         (.readField stream+ "time_base")))]
+
     (avcodec_parameters_to_context decoder-context codec-parameters)
     (let [err (avcodec_open2 decoder-context decoder nil)]
       (when (neg? err)
