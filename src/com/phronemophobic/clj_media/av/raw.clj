@@ -69,7 +69,7 @@
     (with-open [w (io/writer (io/file
                               "resources"
                               "av-api.edn"))]
-      (clang/write-edn w (parse-av-api)))))
+      (clang/write-edn w api))))
 
 (def ^:private oformat-path [:structs
                    specter/ALL
