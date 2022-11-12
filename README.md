@@ -58,7 +58,7 @@ clojure -M:skija -m com.phronemophobic.clj-media.skija my-movie.mp4
 
 ## Status
 
-Working examples for skia, swing, and cljfx. A reasonable API is still a WIP. Currently, only video works, but future support for audio is intended.
+Working examples for skia, swing, and cljfx. A reasonable API is still a WIP. Currently, basic support for video and audio, but synced video/audio is still a WIP.
 
 ## License
 
