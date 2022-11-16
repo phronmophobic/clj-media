@@ -90,8 +90,7 @@
 
 (def av-api
   (with-hacks
-    (with-open [rdr (io/reader (io/file "resources"
-                                        "av-api.edn"))
+    (with-open [rdr (io/reader (io/resource "av-api.edn"))
                 pbr (PushbackReader. rdr)]
       (edn/read pbr))))
 
