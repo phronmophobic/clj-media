@@ -53,19 +53,19 @@
 
     (def best-stream (av_find_best_stream format-ctx AVMEDIA_TYPE_AUDIO -1 -1 nil 0))
 
-    (def num-streams (.readField format-ctx "nb_streams"))
+    (def num-streams (:nb_streams format-ctx))
     (def streams (.getPointerArray
-                  (.readField format-ctx "streams")
+                  (:streams format-ctx )
                   0 num-streams))
 
     (def stream (aget streams best-stream))
     (def stream+ (Structure/newInstance AVStreamByReference
                                         stream))
 
-    (.readField stream+ "codecpar")
-    (def codec-parameters (.readField stream+ "codecpar"))
+    (:codecpar stream+ )
+    (def codec-parameters (:codecpar stream+ ))
 
-    (def codec-id (.readField codec-parameters "codec_id" ))
+    (def codec-id (:codec_id  codec-parameters ))
     
 
     (def decoder (avcodec_find_decoder codec-id))
@@ -90,7 +90,7 @@
     ;; check ret for error or eagain
 
     
-    (.readField frame "nb_samples")
+    (:nb_samples frame )
     ;;     /* Write the raw audio data samples of the first plane. This works
     ;;  * fine for packed formats (e.g. AV_SAMPLE_FMT_S16). However,
     ;;  * most audio decoders output planar audio, which uses a separate
@@ -115,11 +115,10 @@
                                                         bit-rate
                                                         channel-layout]}]
   (let [
-        output-format (.readField output-format-context
-                                  "oformat")
+        output-format (:oformat output-format-context)
         output-format+ (Structure/newInstance AVOutputFormatByReference
                                               output-format)
-        codec-id (.readField output-format+ "audio_codec")
+        codec-id (:audio_codec output-format+ )
 
         output-codec (avcodec_find_encoder codec-id)
         _ (when (nil? output-codec)
@@ -132,7 +131,7 @@
         num-channels 2
         ;; sample-rate (int 44100)
         #_#_sample-fmt (-> output-codec
-                       (.readField "sample_fmts")
+                       (:sample_fmts )
                        (.getValue))
 
         _ (doto encoder-context
@@ -145,12 +144,11 @@
             (.writeField "bit_rate" bit-rate))
 
         _ (when (not (zero?
-                      (bit-and (-> output-format+
-                                   (.readField "flags"))
+                      (bit-and (:flags output-format+)
                                AVFMT_GLOBALHEADER)))
             (doto encoder-context
               (.writeField "flags"
-                           (int (bit-or (.readField encoder-context "flags")
+                           (int (bit-or (:flags encoder-context )
                                         AV_CODEC_FLAG_GLOBAL_HEADER)))))
         err (avcodec_open2 encoder-context output-codec nil)
         _ (when (neg? err)
@@ -166,11 +164,11 @@
                     (.writeField "den" (int sample-rate))
                     (.writeField "num" (int 1)))
         _ (doto stream
-            (.writeField "time_base" (.readField encoder-context "time_base")))
+            (.writeField "time_base" (:time_base encoder-context )))
 
         _ (def my-stream stream)
         ;; error = avcodec_parameters_from_context(stream->codecpar, avctx);
-        err (avcodec_parameters_from_context (.readField stream "codecpar")
+        err (avcodec_parameters_from_context (:codecpar stream )
                                              encoder-context)]
     (when (neg? err)
       (throw (Exception. "Could not initialize stream params")))
@@ -188,9 +186,9 @@
           buffer-context (avfilter_graph_alloc_filter filter-graph buffer "src")
 
           args (format "channel_layout=%d:sample_fmt=%d:sample_rate=%d"
-                       (.readField decoder-context "channel_layout")
-                       (.readField decoder-context "sample_fmt")
-                       (.readField decoder-context "sample_rate"))
+                       (:channel_layout decoder-context )
+                       (:sample_fmt decoder-context )
+                       (:sample_rate decoder-context ))
           _ (prn args)
           err (avfilter_init_str buffer-context args)
           _ (when (not (zero? err))
@@ -302,9 +300,9 @@
   (let [bytes-per-sample (av_get_bytes_per_sample sample-format)]
     (map (fn [frame]
            (let [buf-size (* bytes-per-sample
-                             (.readField frame "nb_samples")
-                             (.readField frame "channels"))
-                 buf (-> (nth (.readField frame "data") 0)
+                             (:nb_samples frame )
+                             (:channels frame ))
+                 buf (-> (nth (:data frame ) 0)
                          (.getPointer )
                          (.getByteArray 0 buf-size))]
              
@@ -323,11 +321,11 @@
                                                                (.getAbsolutePath (io/file fname))))
 
                encoder-context (find-encoder-codec output-format-context
-                                                   {:sample-fmt (.readField decoder-context "sample_fmt")
-                                                    :sample-rate (.readField decoder-context "sample_rate")
+                                                   {:sample-fmt (:sample_fmt decoder-context )
+                                                    :sample-rate (:sample_rate decoder-context )
                                                     ;; AV_SAMPLE_FMT_S16
-                                                    :channel-layout (.readField decoder-context "channel_layout")
-                                                    :bit-rate (.readField decoder-context "bit_rate")})]
+                                                    :channel-layout (:channel_layout decoder-context )
+                                                    :bit-rate (:bit_rate decoder-context )})]
      (try
        (transduce (comp av/read-frame
                           (av/decode-frame decoder-context)
