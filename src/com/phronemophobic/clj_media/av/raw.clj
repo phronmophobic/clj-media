@@ -2,7 +2,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
-            [com.phronemophobic.clong.clang :as clang]
             [clojure.edn :as edn]
             [com.phronemophobic.clong.gen.jna :as gen]
             [com.rpl.specter :as specter])
@@ -57,19 +56,21 @@
 
 
 (defn ^:private  parse-av-api []
-  (clang/easy-api nil ;; (first header-files)
-                  (into (conj clang/default-arguments
-                              (first header-files))
-                        (mapcat (fn [h]
-                                  ["-include" h]))
-                        (rest header-files))))
+  (let [default-arguments
+        @(requiring-resolve 'com.phronemophobic.clong.clang/default-arguments)]
+   ((requiring-resolve 'com.phronemophobic.clong.clang/easy-api) nil
+    (into (conj default-arguments
+                (first header-files))
+          (mapcat (fn [h]
+                    ["-include" h]))
+          (rest header-files)))))
 
 (defn ^:private dump-av-api []
   (let [api (parse-av-api)]
     (with-open [w (io/writer (io/file
                               "resources"
                               "av-api.edn"))]
-      (clang/write-edn w api))))
+      ((requiring-resolve 'com.phronemophobic.clong.clang/write-edn) w api))))
 
 (def ^:private oformat-path [:structs
                    specter/ALL
