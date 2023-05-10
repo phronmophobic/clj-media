@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
             [clojure.edn :as edn]
+            [com.phronemophobic.cljonda.ffmpeg]
             [com.phronemophobic.clong.gen.jna :as gen]
             [com.rpl.specter :as specter])
   (:import

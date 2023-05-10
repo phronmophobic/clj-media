@@ -5,22 +5,32 @@
                                      }
         
         
-        cnuernber/avclj {:local/root "../avclj"
-                         ;; :git/sha "bc7c82bea77bfd7d58efe0c609c72c163e889a9a"
-                         ;; :git/url "https://github.com/phronmophobic/avclj"
-                         }
+        ;; cnuernber/avclj {:local/root "../avclj"
+        ;;                  ;; :git/sha "bc7c82bea77bfd7d58efe0c609c72c163e889a9a"
+        ;;                  ;; :git/url "https://github.com/phronmophobic/avclj"
+        ;;                  }
         cnuernber/dtype-next {:mvn/version "8.033"
                               ;; :local/root "../dtype-next"
                               }
 
         com.phronemophobic/clong {:mvn/version "0.9.2"}
         ;; org.craigandera/dynne {:mvn/version "0.4.1"}
+        
 
         }
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.0"}}}
 
+  :cljonda
+  {
+   :extra-deps {
+                com.phronemophobic.cljonda/ffmpeg-linux-x86-64 {:mvn/version "4.4.2-SNAPSHOT"}
+                com.phronemophobic/cljonda-core {:mvn/version "1.0-SNAPSHOT"}
+                ;;com.phronemophobic/clong {:mvn/version }
+                }
+   #_#_:jvm-opts ["-Djava.library.path=/Users/adrian/miniconda3/envs/cljonda-ffmpeg/lib"
+              "-Djna.library.path=../llvm-project/build/out/lib:/Users/adrian/miniconda3/envs/cljonda-ffmpeg/lib"]}
 
   :project
   {:jvm-opts ["-Djava.library.path=/opt/local/lib"

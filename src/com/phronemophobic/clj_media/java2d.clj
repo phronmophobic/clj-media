@@ -15,10 +15,17 @@
             [com.phronemophobic.clong.gen.jna :as gen]
             [tech.v3.datatype :as dtype]
             [tech.v3.libs.buffered-image :as bufimg]
+            
             )
-  (:import com.sun.jna.Pointer))
+  (:import com.sun.jna.Pointer
+javax.imageio.ImageIO))
 
 (raw/import-structs!)
+
+(defn save-image [bi path]
+
+  (with-open [os (clojure.java.io/output-stream path)]
+      (ImageIO/write bi "png" os)))
 
 (defn play-video [fname]
   "Open a window and play the video found at `fname`."
@@ -31,12 +38,12 @@
 
         buffered-image (bufimg/new-image height width :byte-bgr)
 
-        window-info (java2d/run
-                      (fn []
-                        (ui/image buffered-image))
-                      {:window-start-width width
-                       :window-start-height width})
-        repaint (::java2d/repaint window-info)
+        ;; window-info (java2d/run
+        ;;               (fn []
+        ;;                 (ui/image buffered-image))
+        ;;               {:window-start-width width
+        ;;                :window-start-height width})
+        ;; repaint (::java2d/repaint window-info)
         start-time (System/currentTimeMillis)
 
         time-base (.readField decoder-context "time_base")
@@ -48,7 +55,8 @@
                     (video/transcode-frame decoder-context AV_PIX_FMT_RGB24))
         rf (xform (completing
                    (fn [_ frame]
-                     frame)))]
+                     frame)))
+        n (atom 0)]
     (try
       (loop [t 0]
         (let [start-frame-time (System/currentTimeMillis)
@@ -68,7 +76,8 @@
                 (Thread/sleep sleep-ms))
               (video/render-frame buffered-image frame)
 
-              (repaint)
+              ;; (repaint)
+              (save-image buffered-image (str "frame-" (swap! n inc) ".png"))
 
               (recur best-effort-timestamp))
 
@@ -78,3 +87,9 @@
 
 (defn -main [fname]
   (play-video fname))
+
+
+
+(comment
+  (play-video "/home/ubuntu/clj-media/my-movie.mp4")
+  ,)
