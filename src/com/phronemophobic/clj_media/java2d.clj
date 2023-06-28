@@ -65,7 +65,7 @@
                   sleep-ms (- (* 1000 fps best-effort-timestamp)
                               (- (System/currentTimeMillis) start-time ))]
               (when (pos? sleep-ms)
-                (Thread/sleep sleep-ms))
+                (Thread/sleep (long sleep-ms)))
               (video/render-frame buffered-image frame)
 
               (repaint)
