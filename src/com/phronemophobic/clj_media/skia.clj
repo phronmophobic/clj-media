@@ -16,17 +16,19 @@
 (defn ^:private long->pointer [n]
   (tech.v3.datatype.ffi.Pointer. n))
 
-(skia/defc skia_bgra8888_draw skia/membraneskialib Void/TYPE [skia-resource buffer width height row-bytes])
+(def skialib @#'skia/membraneskialib)
+
+(skia/defc skia_bgra8888_draw skialib Void/TYPE [skia-resource buffer width height row-bytes])
 (defn skia-bgra8888-draw [resource buffer width height row-bytes]
   (skia_bgra8888_draw resource buffer (int width) (int height) (int row-bytes)))
 
-(skia/defc skia_direct_bgra8888_buffer skia/membraneskialib Pointer [buf width height row-bytes])
+(skia/defc skia_direct_bgra8888_buffer skialib Pointer [buf width height row-bytes])
 (defn skia-direct-bgra8888-buffer [buf width height row-bytes]
   (skia_direct_bgra8888_buffer buf (int width) (int height) (int row-bytes)))
 
-(skia/defc skia_cleanup skia/membraneskialib Void/TYPE [skia-resource])
+(skia/defc skia_cleanup skialib Void/TYPE [skia-resource])
 
-(skia/defc skia_draw_surface skia/membraneskialib Void/TYPE [destination source])
+(skia/defc skia_draw_surface skialib Void/TYPE [destination source])
 
 (defrecord VideoView [n resource width height draw-lock]
   ui/IOrigin
