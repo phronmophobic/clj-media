@@ -72,21 +72,40 @@
                               "av-api.edn"))]
       ((requiring-resolve 'com.phronemophobic.clong.clang/write-edn) w api))))
 
-(def ^:private oformat-path [:structs
-                   specter/ALL
-                   #(= :clong/AVFormatContext (:id %))
-                   :fields
-                   specter/ALL
-                   #(#{"oformat" "pb"}
-                       (:name %))
-                   :datatype])
+(defn pointer? [datatype]
+  (and (vector? datatype)
+       (= :coffi.mem/pointer
+          (first datatype))))
+
+;; AVCodec
+
+(def ^:private oformat-path
+  [:structs
+   specter/ALL
+   #(#{:clong/AVFormatContext
+       :clong/AVCodec
+       :clong/AVCodecContext} (:id %))
+   :fields
+   specter/ALL
+   :datatype
+   pointer?
+   ])
+
+
+
 
 ;; JNA has trouble `.writeField`ing
 ;; to StructureByReference fields
 (defn ^:private with-hacks [api]
-  (specter/setval oformat-path
-                  :coffi.mem/pointer
-                  api))
+  (->> api
+       (specter/setval oformat-path
+                       :coffi.mem/pointer)
+       (specter/setval [:functions
+                        specter/ALL
+                        #(or (str/starts-with? (:symbol %) "vk")
+                             (str/starts-with? (:symbol %) "av_vk")
+                             (str/includes? (:symbol %) "vdpau"))]
+                       specter/NONE)))
 
 (def av-api
   (with-hacks
