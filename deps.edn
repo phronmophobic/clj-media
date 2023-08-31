@@ -1,70 +1,26 @@
 {:paths ["src" "resources"]
- :deps {org.clojure/clojure {:mvn/version "1.10.3"}
-        com.phronemophobic/membrane {:mvn/version "0.10.1-beta"
+ :deps {org.clojure/clojure {:mvn/version "1.12.0-alpha3"}
+        com.phronemophobic/membrane {:mvn/version "0.13.1-beta"
                                      ;; :local/root "../membrane2"
                                      }
         
-        
-        cnuernber/avclj {:local/root "../avclj"
-                         ;; :git/sha "bc7c82bea77bfd7d58efe0c609c72c163e889a9a"
-                         ;; :git/url "https://github.com/phronmophobic/avclj"
-                         }
-        cnuernber/dtype-next {:mvn/version "8.033"
-                              ;; :local/root "../dtype-next"
-                              }
 
-        com.phronemophobic/clong {:mvn/version "0.9.2"}
+        com.phronemophobic/clong {:mvn/version "1.1"}
         ;; org.craigandera/dynne {:mvn/version "0.4.1"}
 
         }
  :aliases
- {:test {:extra-paths ["test"]
-         :extra-deps {org.clojure/test.check {:mvn/version "1.1.0"}}}
-
-
+ {
   :project
-  {:jvm-opts ["-Djava.library.path=/opt/local/lib"
-              "-Djna.library.path=../llvm-project/build/out/lib:/opt/local/lib"]
-   :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}
-                com.phronemophobic/clong {:local/root "../clong"}}}
-
-  :skia
-  {:extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.9.31.0-beta"}
-                com.phronemophobic.membrane/skialib-macosx-x86-64 {:mvn/version "0.9.31.0-beta"}
-                com.phronemophobic.membrane/skialib-linux-x86-64 {:mvn/version "0.9.31.0-beta"}}}
-
-  :skija {
-          :extra-deps {org.jetbrains.skija/skija-macos-arm64 {:mvn/version "0.93.4"}
-                       org.jetbrains.skija/skija-macos-x64 {:mvn/version "0.93.4"}
-                       org.jetbrains.skija/skija-linux {:mvn/version "0.93.1"}
-                       org.lwjgl/lwjgl {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl$natives-macos {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl$natives-macos-arm64 {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl$natives-linux {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-glfw {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-glfw$natives-macos {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-glfw$natives-macos-arm64 {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-glfw$natives-linux {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-opengl {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-opengl$natives-macos {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-opengl$natives-macos-arm64 {:mvn/version "3.3.0"}
-                       org.lwjgl/lwjgl-opengl$natives-linux {:mvn/version "3.3.0"}}}
-
-  :cljfx
-  {:extra-deps {cljfx/cljfx {:mvn/version "RELEASE"}
-                org.openjfx/javafx-swing {:mvn/version "17.0.0.1"}}}
-
-  :runner
-  {:extra-deps {io.github.cognitect-labs/test-runner
-                {:git/url "https://github.com/cognitect-labs/test-runner"
-                 :sha "2d69f33d7980c3353b246c28f72ffeafbd9f2fab"}}
-   :exec-fn cognitect.test-runner.api/test}
-  :jar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "RELEASE"}}
-        :exec-fn hf.depstar/jar
-        :exec-args {:jar "clj-media.jar" :sync-pom true}}
-  :install {:replace-deps {slipset/deps-deploy {:mvn/version "0.1.5"}}
-            :exec-fn deps-deploy.deps-deploy/deploy
-            :exec-args {:installer :local :artifact "clj-media.jar"}}
-  :deploy {:replace-deps {slipset/deps-deploy {:mvn/version "0.1.5"}}
-           :exec-fn deps-deploy.deps-deploy/deploy
-           :exec-args {:installer :remote :artifact "clj-media.jar"}}}}
+  {:jvm-opts [;; "-Djava.library.path=/opt/local/lib"
+              "-Djna.library.path=../llvm-project/build/out/lib:/opt/local/lib"
+              ;;"-Djna.library.path=../llvm-project/build/out/lib"
+              ]
+   :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.13-beta"}
+                com.phronemophobic/clong {:local/root "../clong"}
+                org.bytedeco/llvm-platform {:mvn/version "16.0.4-1.5.9"}
+                ;; org.bytedeco/ffmpeg-platform {:mvn/version "6.0-1.5.9"}
+                ;; org.bytedeco/ffmpeg {:mvn/version "4.4-1.5.6"}
+                ;; com.phronemophobic.cljonda/ffmpeg-darwin-aarch64 {:mvn/version "4.4.2-SNAPSHOT"}
+                ;; com.phronemophobic.cljonda/ffmpeg-macosx-aarch64 {:mvn/version "4.4.2-SNAPSHOT"}
+                }}}}
