@@ -22,48 +22,85 @@
 (def ^:private lib
   (com.sun.jna.NativeLibrary/getProcess))
 
+(import 'org.bytedeco.javacpp.Loader)
+
+;; load all libraries
+;; need to initialize class instances because native libraries
+;;   are loaded in static initializers
+(do (import 'org.bytedeco.ffmpeg.global.avcodec) (avcodec.))
+(do (import 'org.bytedeco.ffmpeg.global.avdevice) (avdevice.))
+(do (import 'org.bytedeco.ffmpeg.global.avfilter) (avfilter.))
+(do (import 'org.bytedeco.ffmpeg.global.avformat) (avformat.))
+(do (import 'org.bytedeco.ffmpeg.global.avutil) (avutil.))
+(do (import 'org.bytedeco.ffmpeg.global.swresample) (swresample.))
+(do (import 'org.bytedeco.ffmpeg.global.swscale) (swscale.))
+
+;; list loaded libraries
+;; (keys (Loader/getLoadedLibraries))
 
 
+(def ^:private lib-versions ["avutil@.58"
+                             "avfilter@.9"
+                             "avformat@.60"
+                             "avdevice@.60"
+                             "swresample@.4"
+                             "swscale@.7"
+                             "avcodec@.60"])
 (def ^:private lib-names ["avutil"
-                          "avresample"
                           "avfilter"
                           "avformat"
                           "avdevice"
                           "swresample"
                           "swscale"
                           "avcodec"])
-(def ^:private header-files
-  (into []
-        (comp (map #(io/file "/opt/local/include" (str "lib" %)))
-              (mapcat #(.listFiles %))
-              (map #(.getAbsolutePath %))
-              (filter #(str/ends-with? % ".h")))
-        lib-names))
 
 (defonce ^:private libs (atom #{}))
 (defn ^:private load-libs
   ([]
-   (load-libs lib-names))
-  ([lib-names]
+   (load-libs lib-versions))
+  ([lib-versions]
    (let [new-libs
          (into []
-               (map #(com.sun.jna.NativeLibrary/getInstance %))
-               lib-names)]
+               (map (fn [lib-version]
+                      (let [lib-path (get (Loader/getLoadedLibraries) lib-version)]
+                        (com.sun.jna.NativeLibrary/getInstance lib-path))))
+               lib-versions)]
      
      (swap! libs into new-libs))))
 (load-libs)
 
-
-
 (defn ^:private  parse-av-api []
   (let [default-arguments
-        @(requiring-resolve 'com.phronemophobic.clong.clang/default-arguments)]
-   ((requiring-resolve 'com.phronemophobic.clong.clang/easy-api) nil
-    (into (conj default-arguments
-                (first header-files))
-          (mapcat (fn [h]
-                    ["-include" h]))
-          (rest header-files)))))
+        @(requiring-resolve 'com.phronemophobic.clong.clang/default-arguments)
+
+        header-files (->> lib-names
+                          (map #(str "lib" % "/" % ".h"))
+                          (map #(io/file "../FFmpeg/" %))
+                          (map #(.getCanonicalPath %)))
+        header-files (into header-files
+                           (comp (map #(io/file "../FFmpeg/" %))
+                                 (map #(.getCanonicalPath %)))
+                           ["libavfilter/buffersink.h"
+                            "libavfilter/buffersrc.h"])
+
+        clang-args (conj default-arguments
+                         (->> (io/file "../FFmpeg")
+                              (.getCanonicalPath)
+                              (str "-I"))
+                         (first header-files))
+        clang-args (into clang-args
+                         (mapcat (fn [h]
+                              ["-include" h]))
+                         (rest header-files))
+        clang-args (into clang-args
+                         (comp (map io/file)
+                               (map #(.getParent %))
+                               (distinct)
+                               (map (fn [folder]
+                                      (str "-I" folder))))
+                         header-files)]
+    ((requiring-resolve 'com.phronemophobic.clong.clang/easy-api) nil
+       clang-args)))
 
 (defn ^:private dump-av-api []
   (let [api (parse-av-api)]

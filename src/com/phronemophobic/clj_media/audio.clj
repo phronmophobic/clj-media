@@ -634,8 +634,8 @@
                        (swr_free (doto (PointerByReference.)
                                    (.setValue (Pointer. resample-ctx-ptr))) )))
 
+        bytes-per-sample (av_get_bytes_per_sample (:sample_fmt encoder-context))
         output-frame-size (:frame_size encoder-context)
-
 
         output-frame (doto (av_frame_alloc)
                        (.writeField "nb_samples" output-frame-size)
@@ -660,16 +660,32 @@
         ([result input-frame]
          (if input-frame
            (let [num-samples (:nb_samples input-frame)
+
+                 current-samples (:nb_samples output-frame)
+                 samples-wanted (- output-frame-size
+                                   current-samples)
+                 data-ptr (.share (-> (:data output-frame)
+                                      (nth 0)
+                                      (.getPointer))
+                                  (* bytes-per-sample current-samples))
                  err (swr_convert resample-ctx
-                                    (:data output-frame) output-frame-size
-                                    (:extended_data input-frame) num-samples)]
+                                  data-ptr samples-wanted
+                                  (:extended_data input-frame) num-samples)]
+
              (when (neg? err)
                (throw (Exception. "Error resampling.")))
 
              (if (pos? err)
                (do
-                 (.writeField output-frame "nb_samples" err)
-                 (rf result output-frame))
+                 (let [old-nb-samples (.readField output-frame "nb_samples")
+                       total-samples (+ err old-nb-samples)]
+                   (.writeField output-frame "nb_samples" total-samples)
+                   (if (= total-samples output-frame-size)
+                     (let [result (rf result output-frame)]
+                       (.writeField output-frame "nb_samples" 0)
+                       result)
+                     ;; not enough samples yet
+                     result)))
                ;; else
                result))
            ;; else flush
