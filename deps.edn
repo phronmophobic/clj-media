@@ -4,7 +4,7 @@
                                      ;; :local/root "../membrane2"
                                      }
         
-
+        net.cgrand/xforms {:mvn/version "0.19.5"}
         com.phronemophobic/clong {:mvn/version "1.1"}
         ;; org.craigandera/dynne {:mvn/version "0.4.1"}
 

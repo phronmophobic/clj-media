@@ -1,0 +1,472 @@
+(ns com.phronemophobic.clj-media.impl.filter.media
+  (:refer-clojure :exclude [format])
+  (:require [com.phronemophobic.clj-media.impl.filter.frame
+             :as ff]
+            [net.cgrand.xforms :as x]
+            [clojure.java.io :as io]
+            [com.phronemophobic.clj-media.av :as av]
+            [com.phronemophobic.clj-media.audio :as audio]
+            [com.phronemophobic.clj-media.video :as video]
+            [com.phronemophobic.clj-media.av.raw :as raw
+             :refer :all])
+  (:import
+   java.io.PushbackReader
+   com.sun.jna.Memory
+   com.sun.jna.Pointer
+   com.sun.jna.ptr.PointerByReference
+   com.sun.jna.ptr.IntByReference
+   com.sun.jna.ptr.ByteByReference
+   java.lang.ref.Cleaner
+   com.sun.jna.Structure))
+
+(raw/import-structs!)
+
+;; All frames from a frame source should the same format
+(defprotocol IFrameSource
+  (-frames [this] [this src])
+  (-format [this] [this src]))
+
+
+(defprotocol IMediaSource
+  (-media [this] [this src]
+    "Returns a collection of IFrameSource"))
+
+(defrecord FrameSource [frames format]
+  IFrameSource
+  (-frames [this]
+    frames)
+  (-format [this]
+    format))
+
+(defn audio? [src]
+  (= :media-type/audio
+     (:media-type (-format src))))
+
+(defn video? [src]
+  (= :media-type/video
+     (:media-type (-format src))))
+
+(defn map-audio [f]
+  (map (fn [src]
+         (if (audio? (-format src))
+           (->FrameSource (eduction
+                           (map f)
+                           (-frames src))
+                          (-format src))
+           src))))
+
+(defn map-video [f]
+  (map (fn [src]
+         (if (video? (-format src))
+           (->FrameSource (eduction
+                           (map f)
+                           (-frames src))
+                          (-format src))
+           src))))
+
+(defrecord AdjustVolume [volumef media]
+  IMediaSource
+  (-media [this] (-media this media))
+  (-media [this media]
+    (into []
+          (map-audio ff/adjust-volume)
+          media)))
+
+(defn adjust-volume
+  ([volumef]
+   (->AdjustVolume volumef nil))
+  ([volumef media]
+   (->AdjustVolume volumef media)))
+
+(defn insert-last [x]
+  (fn [rf]
+    (fn
+      ([] (rf))
+      ([result]
+       (let [result (rf result x)]
+         (rf (unreduced result))))
+      ([result input] (rf result input)))))
+
+(defrecord MediaFile [fname]
+  IMediaSource
+  (-media [this]
+    (let [format-context (av/open-context fname)
+          err (avformat_find_stream_info format-context nil)
+          _ (when (not (zero? err))
+            (throw (ex-info "Could not find stream info."
+                            {:error-code err})))
+          num-streams (:nb_streams format-context)
+          streams (.getPointerArray
+                           (.readField format-context "streams")
+                           0 num-streams)
+          packets (sequence
+                   av/read-frame
+                   [format-context])]
+      (into []
+            (map (fn [stream]
+                   (let [stream+ (Structure/newInstance AVStreamByReference
+                                                        stream)
+                         stream-index (:index stream+)
+
+                         codec-parameters (:codecpar stream+)
+                         codec-id (:codec_id codec-parameters)
+                         decoder (avcodec_find_decoder codec-id)
+                         _ (when (nil? decoder)
+                             (throw (ex-info "Could not find decoder"
+                                             {:codec-id codec-id})))
+                         decoder-context (avcodec_alloc_context3 (.getPointer decoder))
+
+                         _ (when (nil? decoder-context)
+                             (throw (ex-info "Could not allocate decoder"
+                                             {})))
+                         _ (doto decoder-context
+                             (.writeField "time_base"
+                                          (.readField stream+ "time_base")))
+
+                         _ (avcodec_parameters_to_context decoder-context codec-parameters)
+                         err (avcodec_open2 decoder-context decoder nil)
+                         _ (when (neg? err)
+                             (throw (Exception. "Could not open codec"
+                                                {:error-code err})))
+                         
+                         format (merge {:time-base (:time_base stream+)}
+                                       (av/codec-context-format decoder-context))
+                         
+                         frames (sequence
+                                 (comp (filter (fn [packet]
+                                                 (= (:stream_index packet)
+                                                    stream-index)))
+                                       (insert-last nil)
+                                       (av/decode-frame decoder-context))
+                                 
+                                 packets)]
+                     (->FrameSource frames format))))
+            streams))))
+
+(defrecord Union [a b]
+  IMediaSource
+  (-media [this]
+    (into []
+          cat
+          [(-media a)
+           (-media b)])))
+
+(defn audio-pts []
+  (comp
+   (x/reductions
+    (fn
+      ([] [0 nil])
+      ([[sum _] frame]
+       [(+ sum (:nb_samples frame))
+        (when frame
+          (doto frame
+            (.writeField "pts" sum)))])))
+   (keep second)))
+
+(defn auto-format-video [input-format codec]
+  (let [pix-fmt (:pix-fmt input-format)
+
+        pix_fmts (:pix_fmts codec)
+        _ (assert pix_fmts)
+        pix-fmts (av/pointer-seq pix_fmts
+                                 4 -1)
+
+        input-format-acceptable?
+        (some #{pix-fmt} pix-fmts)]
+    (if input-format-acceptable?
+      identity
+      (let [output-pix-fmt (first pix-fmts)]
+        (video/transcode-frame3 input-format output-pix-fmt)))))
+
+(defn auto-format-audio [input-format codec]
+  (let [{:keys [channel-layout sample-format sample-rate]} input-format
+
+        sample_rates (:supported_samplerates codec)
+        sample-rates (if sample_rates
+                       (av/pointer-seq sample_rates 4 0)
+                       #{44100})
+
+        sample_fmts (:sample_fmts codec)
+        _ (assert sample_fmts)
+        sample-formats (av/pointer-seq sample_fmts
+                                       4 -1)
+
+        channel_layouts (:channel_layouts codec)
+        
+        ;; assume that empty channel_layouts
+        ;; means any channel layout is supported?
+        channel-layouts (when channel_layouts
+                          (av/pointer-seq channel_layouts 8 0))
+
+        _ (println (.getString (:name codec) 0 "ascii") (doto codec .read))
+        input-format-acceptable?
+        (and (some #{sample-rate} sample-rates)
+             (some #{sample-format} sample-formats)
+             (or
+              (nil? channel-layouts)
+              (some #{channel-layout} channel-layouts)))
+        ]
+    (if input-format-acceptable?
+      (audio/resample2 input-format input-format)
+      (let [sample-rate (if (some #{44100} sample-rates)
+                          44100
+                          (first sample-rates))
+
+            sample-format (first sample-formats)
+            channel-layout (if (some #{audio/AV_CH_LAYOUT_STEREO} channel-layouts)
+                             audio/AV_CH_LAYOUT_STEREO
+                             (or (first channel-layouts)
+                                 channel-layout))
+            output-format {:sample-rate sample-rate
+                           :sample-format sample-format
+                           :channel-layout channel-layout}]
+        (audio/resample2 input-format output-format)))))
+
+(defn auto-format [input-format codec]
+  (condp = (:media-type input-format)
+    :media-type/audio (auto-format-audio input-format codec)
+    :media-type/video (auto-format-video input-format codec)))
+
+(defn auto-format2 [input-format output-format]
+  (case (:media-type input-format)
+    :media-type/audio
+    ;; always resample to obey frame size.
+    (audio/resample2 input-format output-format)
+    
+    :media-type/video
+    (if (= (:pix-fmt input-format)
+           (:pix-fmt output-format))
+      identity
+      (video/transcode-frame3 input-format (:pix-fmt output-format)))))
+
+(defn default-channel-layout []
+  (let [channel-layout (AVChannelLayoutByReference.)
+        err (raw/av_channel_layout_from_string channel-layout "stereo")]
+    (assert (zero? err))
+    channel-layout))
+
+(defn pick-output-format
+  "Chooses an output format. Returns the input format if supported by the output format.
+  Otherwise, tries to choose a good default"
+  [output-format input-format]
+  (let [;; assume that codecs can encode what they decode
+        supported? (= 1
+                      (avformat_query_codec
+                       output-format
+                       (:codec-id input-format)
+                       raw/FF_COMPLIANCE_NORMAL))]
+    (if supported?
+      input-format
+      ;; else choose a default based on what the
+      ;;   output format supports
+      (case (:media-type input-format)
+        :media-type/video
+        (let [codec-id (:video_codec output-format)
+              codec (avcodec_find_encoder codec-id)
+
+              pix-fmt (:pix-fmt input-format)
+
+              pix_fmts (:pix_fmts codec)
+              _ (assert pix_fmts)
+              pix-fmts (av/pointer-seq pix_fmts
+                                       4 -1)
+
+              pix-fmt (first pix-fmts)
+              output-format (merge
+                             input-format
+                             {:pix-fmt pix-fmt
+                              :codec-id codec-id})]
+          output-format)
+
+        :media-type/audio
+        (let [codec-id (:audio_codec output-format)
+              codec (avcodec_find_encoder codec-id)
+
+              sample_rates (:supported_samplerates codec)
+              sample-rates (if sample_rates
+                             (av/pointer-seq sample_rates 4 0)
+                             #{44100})
+              sample-rate (or (some #{44100} sample-rates)
+                              (first sample-rates))
+
+              sample_fmts (:sample_fmts codec)
+              _ (assert sample_fmts)
+              sample-formats (av/pointer-seq sample_fmts
+                                             4 -1)
+              sample-format (first sample-formats)
+
+              ch_layouts (:ch_layouts codec)
+              
+              ;; assume that empty channel_layouts
+              ;; means any channel layout is supported?
+              ch-layouts (when ch_layouts
+                           (av/avchannellayout-seq ch_layouts))
+              
+              channel-layout (if ch-layouts
+                               (letfn [(find-layout [needle]
+                                         (some (fn [layout]
+                                                 (when (zero?
+                                                        (av_channel_layout_compare
+                                                         layout
+                                                         needle))
+                                                   layout))
+                                               ch-layouts))]
+                                 (or (find-layout (:ch-layout input-format))
+                                     (find-layout (default-channel-layout))
+                                     (first ch-layouts)))
+                               (default-channel-layout))
+              
+
+              output-format {:sample-rate sample-rate
+                             :sample-format sample-format
+                             :ch-layout channel-layout
+                             :media-type (:media-type input-format)
+                             :codec-id codec-id
+                             ;; I don't think this is used anywhere?
+                             ;; :time-base (:time-base input-format)
+                             }]
+          output-format)))))
+
+
+(defn write! [src fname]
+  ;; create a stream for each input
+  (let [output-format-context (av/open-output-context fname)
+
+        input-streams (-media src)
+        output-streams
+        (into []
+              (map (fn [src]
+
+                     (let [input-format (-format src)
+
+                           output-format (pick-output-format
+                                          (Structure/newInstance AVOutputFormatByReference
+                                                                 (:oformat output-format-context))
+                                          input-format)
+                           encoder-context (av/encoder-context output-format-context output-format)
+
+                           stream (av/add-stream output-format-context encoder-context)
+                           stream (if (audio? src)
+                                    (doto stream
+                                      (.writeField "time_base" (:time_base encoder-context)))
+                                    stream)
+
+                           stream-index (:index stream)
+
+                           output-format
+                           (if (audio? src)
+                             (assoc output-format
+                                    :frame-size (:frame_size encoder-context))
+                             output-format)]
+                       (when (audio? src)
+                         (let [{:keys [num den]} (:time_base stream)]
+                           (when (or (not= (:sample-rate output-format)
+                                           den)
+                                     (not= 1 num))
+                             (throw (Exception. "Unexpcted time base for audio. must be 1/sample-rate.")))))
+
+                       (lazy-seq
+                        (sequence
+                         (comp (insert-last nil)
+                               (auto-format2 input-format
+                                             output-format)
+                              
+                               (if (audio? src)
+                                 (audio-pts)
+                                 identity)
+                               (insert-last nil)
+                               (av/encode-frame encoder-context)
+                               (map (fn [packet]
+                                      (let [{:keys [duration pts]} packet]
+                                        (av_packet_rescale_ts packet
+                                                              (:time-base input-format)
+                                                              (:time_base stream)))
+                                      packet))
+                              
+                               (map (fn [packet]
+                                      (doto packet
+                                        (.writeField "stream_index" stream-index)))))
+                        
+                        
+                         (-frames src))))))
+              input-streams)]
+
+    ;; need to write header before creating streams
+    ;; sets time_base in streams?
+    #_(let [err (avformat_write_header output-format-context nil)]
+        (when (neg? err)
+          (throw (Exception.)))
+        err)    
+
+
+    
+    (transduce
+     identity
+     (av/write-packet2 output-format-context)
+     (eduction cat
+               output-streams))
+
+    
+    #_(let [err (av_write_trailer output-format-context)]
+        (when (neg? err)
+          (throw (Exception.)))
+        err)
+
+    (avio_closep (doto (PointerByReference.)
+                   (.setValue (:pb output-format-context)))))
+  )
+
+(defn filter-audio [src]
+  (reify
+    IMediaSource
+    (-media [this]
+      (filterv (fn [src]
+                 (= :media-type/audio
+                    (:media-type (-format src))))
+               (-media src)))))
+
+(defn filter-video [src]
+  (reify
+    IMediaSource
+    (-media [this]
+      (filterv (fn [src]
+                 (= :media-type/video
+                    (:media-type (-format src))))
+               (-media src)))))
+
+(defn ^:private ->url-str [fname]
+  (str "file://" (.getCanonicalPath (io/file fname))))
+
+(defn -main [& args]
+  (let [outname (or (first args)
+                    "test.mov")
+        [inname outname]
+        (case (count args)
+          0 ["file:///Users/adrian/workspace/apple-data/iCloud Photos Part 1 of 3/Photos/IMG_0454.mp4"
+             "test.mp4"]
+          1 ["file:///Users/adrian/workspace/apple-data/iCloud Photos Part 1 of 3/Photos/IMG_0454.mp4"
+             (first args)]
+
+          ;; else
+          [(str "file://" (.getCanonicalPath (io/file (first args))))
+           (second args)]
+          )]
+    (write! (-> (->MediaFile
+                 ;;"file:///Users/adrian/workspace/apple-data/iCloud Photos Part 1 of 3/Photos/IMG_0454.mp4"
+                 inname
+                 #_"file:///Users/adrian/workspace/blog/blog/resources/public/mairio/videos/mairio-level-5-3.mp4"
+                 )
+                ;; (filter-video)
+                ;; (filter-audio)
+                )
+            outname)
+
+    #_(write! (-> (->Union
+                   (->MediaFile
+                    (->url-str "./examples/codetogif/this-is-fine-but-with-earthquakes.gif"))
+                   (->MediaFile
+                    (->url-str "./examples/avencode/bar.mp3")))
+                  ;; (filter-video)
+                  ;; (filter-audio)
+                  )
+              "union.mp4")))

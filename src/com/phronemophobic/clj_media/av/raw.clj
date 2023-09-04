@@ -18,6 +18,14 @@
 (def AVIO_FLAG_READ_WRITE 3)
 (def AVFMT_GLOBALHEADER  0x0040)
 (def AV_CODEC_FLAG_GLOBAL_HEADER (bit-shift-left 1 22))
+(def AV_CODEC_CAP_VARIABLE_FRAME_SIZE (int (bit-shift-left 1 16)) )
+
+(def FF_COMPLIANCE_VERY_STRICT   2) ;; ///< Strictly conform to an older more strict version of the spec or reference software.
+(def FF_COMPLIANCE_STRICT        1) ;; ///< Strictly conform to all the things in the spec no matter what consequences.
+(def FF_COMPLIANCE_NORMAL        0) ;;
+(def FF_COMPLIANCE_UNOFFICIAL   -1) ;; ///< Allow unofficial extensions
+(def FF_COMPLIANCE_EXPERIMENTAL -2) ;; ///< Allow nonstandardized experimental things.
+
 
 (def ^:private lib
   (com.sun.jna.NativeLibrary/getProcess))

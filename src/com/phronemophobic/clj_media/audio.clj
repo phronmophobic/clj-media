@@ -71,6 +71,7 @@
 (comment
 
   (def fname "file:///Users/adrian/workspace/eddie/megaman.mp3")
+  (def fname "file://Users/adrian/workspace/apple-data/iCloud Photos Part 1 of 3/Photos/IMG_0454.mp4" )
   (def fname "/var/tmp/song.m4a")
 
   (def format-ctx (avformat_alloc_context))
@@ -642,6 +643,122 @@
                        (.writeField "channel_layout" (:channel_layout encoder-context))
                        (.writeField "format" (:sample_fmt encoder-context))
                        (.writeField "sample_rate" (:sample_rate encoder-context)))
+        err (av_frame_get_buffer output-frame 0)
+        _ (when (neg? err)
+            (throw (Exception. "Could not alloc resample output frame.")))
+
+        ptr (Pointer/nativeValue (.getPointer output-frame))]
+    (.register av/cleaner output-frame
+               (fn []
+                 (av_frame_free
+                  (doto (PointerByReference.)
+                    (.setValue (Pointer. ptr))))))
+    (fn [rf]
+      (fn
+        ([] (rf))
+        ([result]
+         (rf result))
+        ([result input-frame]
+         (if input-frame
+           (let [num-samples (:nb_samples input-frame)
+
+                 current-samples (:nb_samples output-frame)
+                 samples-wanted (- output-frame-size
+                                   current-samples)
+                 data-ptr (.share (-> (:data output-frame)
+                                      (nth 0)
+                                      (.getPointer))
+                                  (* bytes-per-sample current-samples))
+                 err (swr_convert resample-ctx
+                                  data-ptr samples-wanted
+                                  (:extended_data input-frame) num-samples)]
+
+             (when (neg? err)
+               (throw (Exception. "Error resampling.")))
+
+             (if (pos? err)
+               (do
+                 (let [old-nb-samples (.readField output-frame "nb_samples")
+                       total-samples (+ err old-nb-samples)]
+                   (.writeField output-frame "nb_samples" total-samples)
+                   (if (= total-samples output-frame-size)
+                     (let [result (rf result output-frame)]
+                       (.writeField output-frame "nb_samples" 0)
+                       result)
+                     ;; not enough samples yet
+                     result)))
+               ;; else
+               result))
+           ;; else flush
+           (let [result
+                 (loop [result result]
+                   (let [err (swr_convert resample-ctx
+                                          (:data output-frame) output-frame-size
+                                          nil 0)]
+                     (cond
+
+                       (neg? err)
+                       (throw (Exception. "Error flushing audio resampler."))
+
+                       (zero? err) result
+
+                       (pos? err)
+                       (let [_ (.writeField output-frame "nb_samples" err)
+                             result (rf result output-frame)]
+                         (if (reduced? result)
+                           result
+                           (recur result))))))]
+             result)))))))
+
+(defn resample2 [input-format output-format]
+  (let [resample-ctx* (PointerByReference. Pointer/NULL)
+        err (swr_alloc_set_opts2 resample-ctx*
+                                 (.getPointer
+                                    (:ch-layout output-format))
+                                 (:sample-format output-format)
+                                 (:sample-rate output-format)
+                                 (.getPointer
+                                  (:ch-layout input-format))
+                                 (:sample-format input-format)
+                                 (:sample-rate input-format)
+                                 0
+                                 nil)
+
+        _ (when (not (zero? err))
+            (throw (Exception. "Could not initialize resample context")))
+        resample-ctx (.getValue resample-ctx*)
+
+        err (swr_init resample-ctx)
+        _ (when (neg? err)
+            (throw (Exception. "Could not initialize resample context")))
+        resample-ctx-ptr (Pointer/nativeValue resample-ctx)
+        _ (.register av/cleaner resample-ctx
+                     (fn []
+                       (swr_free (doto (PointerByReference.)
+                                   (.setValue (Pointer. resample-ctx-ptr))) )))
+
+        bytes-per-sample (av_get_bytes_per_sample (:sample-format output-format))
+        ;; should maybe check for AV_CODEC_CAP_VARIABLE_FRAME_SIZE?
+        output-frame-size (or (:frame-size output-format)
+                              (int 1024))
+
+        ;; shouldn't be reusing frames here.
+        output-frame (doto (av_frame_alloc)
+                       (.writeField "nb_samples" output-frame-size)
+                       ;; set below
+                       ;; (.writeField "ch_layout" (:ch-layout output-format))
+                       (.writeField "format" (:sample-format output-format))
+                       (.writeField "sample_rate" (:sample-rate output-format)))
+
+        _ (assert
+           (zero? (av_channel_layout_copy
+                   (.getPointer (:ch_layout output-frame))
+                   (.getPointer (:ch-layout output-format)))))
+
+        _ (prn output-frame-size)
+        _ (println (doto (:ch_layout output-frame)
+                     .read))
+
         err (av_frame_get_buffer output-frame 0)
         _ (when (neg? err)
             (throw (Exception. "Could not alloc resample output frame.")))
