@@ -335,7 +335,7 @@
   {:codec-id (:codec_id codec-context)
    :media-type :media-type/video
    :width (:width codec-context)
-   :height (:width codec-context)
+   :height (:height codec-context)
    :pix-fmt (:pix_fmt codec-context)
    :gop-size (:gop_size codec-context)})
 
