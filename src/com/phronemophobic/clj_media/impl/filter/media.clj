@@ -31,6 +31,9 @@
   (-media [this] [this src]
     "Returns a collection of IFrameSource"))
 
+(defn media-source? [x]
+  (satisfies? IMediaSource x))
+
 (defrecord FrameSource [frames format]
   IFrameSource
   (-frames [this]
@@ -87,60 +90,103 @@
          (rf (unreduced result))))
       ([result input] (rf result input)))))
 
+(defrecord Scale [sx sy media]
+  IMediaSource
+  (-media [this]
+    (mapv (fn [src]
+            (let [input-format (-format src)
+
+                  ]
+              (case (:media-type input-format)
+                :media-type/audio src
+
+                :media-type/video
+                (let [output-format (-> input-format
+                                        (update :width (fn [w]
+                                                         (int (* w sx))))
+                                        (update :height (fn [h]
+                                                          (int (* h sy)))))]
+                  (->FrameSource
+                   (sequence
+                    (video/swscale input-format output-format)
+                    (-frames src))
+                   output-format)))))
+     (-media media))))
+
+(defn ^:private distinct-by
+  "Returns a lazy sequence of the elements of coll with duplicates removed.
+  Returns a stateful transducer when no collection is provided."
+  {:added "1.0"
+   :static true}
+  ([keyfn]
+   (fn [rf]
+     (let [seen (volatile! #{})]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [k (keyfn input)]
+           (if (contains? @seen k)
+             result
+             (do (vswap! seen conj k)
+                 (rf result input))))))))))
+
 (defrecord MediaFile [fname]
   IMediaSource
   (-media [this]
     (let [format-context (av/open-context fname)
           err (avformat_find_stream_info format-context nil)
           _ (when (not (zero? err))
-            (throw (ex-info "Could not find stream info."
-                            {:error-code err})))
+              (throw (ex-info "Could not find stream info."
+                              {:error-code err})))
           num-streams (:nb_streams format-context)
           streams (.getPointerArray
-                           (.readField format-context "streams")
-                           0 num-streams)
+                   (.readField format-context "streams")
+                   0 num-streams)
           packets (sequence
                    av/read-frame
                    [format-context])]
       (into []
-            (map (fn [stream]
-                   (let [stream+ (Structure/newInstance AVStreamByReference
-                                                        stream)
-                         stream-index (:index stream+)
+            (comp
+             (distinct-by #(System/identityHashCode %))
+             (map (fn [stream]
+                    (let [stream+ (Structure/newInstance AVStreamByReference
+                                                         stream)
+                          stream-index (:index stream+)
 
-                         codec-parameters (:codecpar stream+)
-                         codec-id (:codec_id codec-parameters)
-                         decoder (avcodec_find_decoder codec-id)
-                         _ (when (nil? decoder)
-                             (throw (ex-info "Could not find decoder"
-                                             {:codec-id codec-id})))
-                         decoder-context (avcodec_alloc_context3 (.getPointer decoder))
+                          codec-parameters (:codecpar stream+)
+                          codec-id (:codec_id codec-parameters)
+                          decoder (avcodec_find_decoder codec-id)
+                          _ (when (nil? decoder)
+                              (throw (ex-info "Could not find decoder"
+                                              {:codec-id codec-id})))
+                          decoder-context (avcodec_alloc_context3 (.getPointer decoder))
 
-                         _ (when (nil? decoder-context)
-                             (throw (ex-info "Could not allocate decoder"
-                                             {})))
-                         _ (doto decoder-context
-                             (.writeField "time_base"
-                                          (.readField stream+ "time_base")))
+                          _ (when (nil? decoder-context)
+                              (throw (ex-info "Could not allocate decoder"
+                                              {})))
+                          _ (doto decoder-context
+                              (.writeField "time_base"
+                                           (.readField stream+ "time_base")))
 
-                         _ (avcodec_parameters_to_context decoder-context codec-parameters)
-                         err (avcodec_open2 decoder-context decoder nil)
-                         _ (when (neg? err)
-                             (throw (Exception. "Could not open codec"
-                                                {:error-code err})))
+                          _ (avcodec_parameters_to_context decoder-context codec-parameters)
+                          err (avcodec_open2 decoder-context decoder nil)
+                          _ (when (neg? err)
+                              (throw (Exception. "Could not open codec"
+                                                 {:error-code err})))
                          
-                         format (merge {:time-base (:time_base stream+)}
-                                       (av/codec-context-format decoder-context))
+                          format (merge {:time-base (:time_base stream+)}
+                                        (av/codec-context-format decoder-context))
                          
-                         frames (sequence
-                                 (comp (filter (fn [packet]
-                                                 (= (:stream_index packet)
-                                                    stream-index)))
-                                       (insert-last nil)
-                                       (av/decode-frame decoder-context))
+                          frames (sequence
+                                  (comp (filter (fn [packet]
+                                                  (= (:stream_index packet)
+                                                     stream-index)))
+                                        (insert-last nil)
+                                        (av/decode-frame decoder-context))
                                  
-                                 packets)]
-                     (->FrameSource frames format))))
+                                  packets)]
+                      (->FrameSource frames format)))))
             streams))))
 
 (defrecord Union [a b]
@@ -416,23 +462,23 @@
                    (.setValue (:pb output-format-context)))))
   )
 
-(defn filter-audio [src]
+(defn filter-audio [media]
   (reify
     IMediaSource
     (-media [this]
       (filterv (fn [src]
                  (= :media-type/audio
                     (:media-type (-format src))))
-               (-media src)))))
+               (-media media)))))
 
-(defn filter-video [src]
+(defn filter-video [media]
   (reify
     IMediaSource
     (-media [this]
       (filterv (fn [src]
                  (= :media-type/video
                     (:media-type (-format src))))
-               (-media src)))))
+               (-media media)))))
 
 (defn ^:private ->url-str [fname]
   (str "file://" (.getCanonicalPath (io/file fname))))
@@ -440,11 +486,12 @@
 (defn -main [& args]
   (let [outname (or (first args)
                     "test.mov")
+        default-input (->url-str "/Users/adrian/workspace/eddie/vids/guitar_notes.mp4")
         [inname outname]
         (case (count args)
-          0 ["file:///Users/adrian/workspace/apple-data/iCloud Photos Part 1 of 3/Photos/IMG_0454.mp4"
+          0 [default-input
              "test.mp4"]
-          1 ["file:///Users/adrian/workspace/apple-data/iCloud Photos Part 1 of 3/Photos/IMG_0454.mp4"
+          1 [default-input
              (first args)]
 
           ;; else
@@ -458,6 +505,7 @@
                  )
                 ;; (filter-video)
                 ;; (filter-audio)
+                (->> (->Scale 0.25 0.5))
                 )
             outname)
 

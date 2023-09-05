@@ -33,6 +33,15 @@
     (.writeField "num" (int num))
     (.writeField "den" (int den))))
 
+(defn ch-layout->str [ch-layout]
+  (let [buf (Memory. 512)
+        err (av_channel_layout_describe (.getPointer ch-layout) buf (.size buf))]
+    (when (neg? err)
+      (throw (ex-info "Could not encode ch-layout."
+                      {:ch-layout ch-layout
+                       :err err})))
+    (String. (.getByteArray buf 0 err) "ascii")))
+
 (defn error->str [err]
   (let [buf (byte-array 255)]
     (av_strerror err buf (alength buf))
@@ -92,8 +101,7 @@
   (toNative [_]
     (.toNative frame)))
 
-
-(defn ^:private new-frame []
+(defn new-frame []
   (let [frame (av_frame_alloc)
         ptr (Pointer/nativeValue (.getPointer frame))]
     (.register cleaner frame
@@ -103,7 +111,7 @@
                     (.setValue (Pointer. ptr))))))
     frame))
 
-(defn ^:private new-packet[]
+(defn new-packet[]
   (let [packet (av_packet_alloc)
         ptr (Pointer/nativeValue (.getPointer packet))]
     (.register cleaner packet
