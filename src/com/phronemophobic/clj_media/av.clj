@@ -350,7 +350,6 @@
    :ch-layout (:ch_layout codec-context)})
 
 (defn codec-context-format [codec-context]
-  (prn (:codec_type codec-context))
   (condp = (:codec_type codec-context)
     AVMEDIA_TYPE_AUDIO (audio-codec-context-format codec-context)
     AVMEDIA_TYPE_VIDEO (video-codec-context-format codec-context)))
@@ -440,7 +439,6 @@
         output-codec (avcodec_find_encoder codec-id)
         _ (when (nil? output-codec)
             (throw (Exception. "could not find encoder")))
-        _ (println "output codec" output-codec)
 
         encoder-context (avcodec_alloc_context3 output-codec)
         _ (when (nil? encoder-context)
@@ -517,7 +515,6 @@
       (when (neg? err)
         (throw (Exception. "Could not open codec"
                            {:error-code err})))
-      (prn "codec id: " codec-id)
       decoder-context)))
 
 (defn open-output-context [fname]

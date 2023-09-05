@@ -327,7 +327,6 @@
                        (:channel_layout decoder-context )
                        (:sample_fmt decoder-context )
                        (:sample_rate decoder-context ))
-          _ (prn args)
           err (avfilter_init_str buffer-context args)
           _ (when (not (zero? err))
               (throw (Exception.)))
@@ -358,7 +357,6 @@
               (throw (Exception.)))
           err (avfilter_graph_config filter-graph nil)]
       (when (not (>= err 0))
-        (prn err)
         (throw (Exception.)))
       (fn
         ([]
@@ -415,7 +413,6 @@
                        1
                        (:sample_rate decoder-context)
                        #_#_(:num decoder-time-base) (:den decoder-time-base))
-          _ (prn args)
           err (avfilter_init_str buffer-context args)
           _ (when (not (zero? err))
               (throw (Exception.)))
@@ -469,7 +466,6 @@
               (throw (Exception.)))
           err (avfilter_graph_config filter-graph nil)]
       (when (not (>= err 0))
-        (prn err)
         (throw (Exception.)))
       (fn
         ([]
@@ -754,10 +750,6 @@
            (zero? (av_channel_layout_copy
                    (.getPointer (:ch_layout output-frame))
                    (.getPointer (:ch-layout output-format)))))
-
-        _ (prn output-frame-size)
-        _ (println (doto (:ch_layout output-frame)
-                     .read))
 
         err (av_frame_get_buffer output-frame 0)
         _ (when (neg? err)

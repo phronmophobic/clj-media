@@ -244,7 +244,6 @@
         channel-layouts (when channel_layouts
                           (av/pointer-seq channel_layouts 8 0))
 
-        _ (println (.getString (:name codec) 0 "ascii") (doto codec .read))
         input-format-acceptable?
         (and (some #{sample-rate} sample-rates)
              (some #{sample-format} sample-formats)
