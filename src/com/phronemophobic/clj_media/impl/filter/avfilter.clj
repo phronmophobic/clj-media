@@ -11,6 +11,8 @@
             [com.phronemophobic.clj-media.av :as av]
             [com.phronemophobic.clj-media.audio :as audio]
             [com.phronemophobic.clj-media.video :as video]
+            [com.phronemophobic.clj-media.impl.util
+             :refer [distinct-by]]
             [com.phronemophobic.clj-media.av.raw :as raw
              :refer :all])
   (:import

@@ -7,6 +7,9 @@
             [com.phronemophobic.clj-media.av :as av]
             [com.phronemophobic.clj-media.audio :as audio]
             [com.phronemophobic.clj-media.video :as video]
+            [com.phronemophobic.clj-media.impl.util
+             :refer [distinct-by]
+             :as media-util]
             [com.phronemophobic.clj-media.av.raw :as raw
              :refer :all])
   (:import
@@ -112,24 +115,6 @@
                     (-frames src))
                    output-format)))))
      (-media media))))
-
-(defn ^:private distinct-by
-  "Returns a lazy sequence of the elements of coll with duplicates removed.
-  Returns a stateful transducer when no collection is provided."
-  {:added "1.0"
-   :static true}
-  ([keyfn]
-   (fn [rf]
-     (let [seen (volatile! #{})]
-       (fn
-         ([] (rf))
-         ([result] (rf result))
-         ([result input]
-          (let [k (keyfn input)]
-           (if (contains? @seen k)
-             result
-             (do (vswap! seen conj k)
-                 (rf result input))))))))))
 
 (defrecord MediaFile [fname]
   IMediaSource
@@ -423,6 +408,7 @@
                                (av/encode-frame encoder-context)
                                (map (fn [packet]
                                       (let [{:keys [duration pts]} packet]
+                                        (.writeField packet "time_base" (:time_base stream))
                                         (av_packet_rescale_ts packet
                                                               (:time-base input-format)
                                                               (:time_base stream)))
@@ -436,23 +422,29 @@
                          (-frames src))))))
               input-streams)]
 
+
     ;; need to write header before creating streams
-    ;; sets time_base in streams?
-    #_(let [err (avformat_write_header output-format-context nil)]
-        (when (neg? err)
-          (throw (Exception.)))
-        err)    
+    ;; sets time_base in streams
+    (let [err (avformat_write_header output-format-context nil)]
+      (when (neg? err)
+        (throw (Exception.)))
+      err)
 
 
     
     (transduce
      identity
      (av/write-packet2 output-format-context)
-     (eduction cat
-               output-streams))
-
+     (apply media-util/interleave-all-by
+            (fn [packet]
+              (let [{{:keys [num den]} :time_base
+                     :keys [pts]} packet]
+                (/ (* pts
+                      num)
+                   den)))
+            output-streams))
     
-    #_(let [err (av_write_trailer output-format-context)]
+    (let [err (av_write_trailer output-format-context)]
         (when (neg? err)
           (throw (Exception.)))
         err)

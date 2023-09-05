@@ -270,53 +270,39 @@
 (defn write-packet2
   "Reducing function that writes a header, packets, then trailer."
   [output-format-context]
-  (let [write-header
-        (delay
-          (let [err (avformat_write_header output-format-context nil)]
-            (when (neg? err)
-              (throw (Exception.)))))]
-   (fn
-     ([]
-      @write-header
-      output-format-context)
-     ([result]
-      @write-header
-      (let [result
-            (loop []
-              (let [err (av_write_frame output-format-context nil)]
-                (cond
+  (fn
+    ([]
+       output-format-context)
+    ([result]
+       (let [result
+           (loop []
+             (let [err (av_write_frame output-format-context nil)]
+               (cond
 
-                  (neg? err)
-                  (reduced {:error-code err
-                            :type :write-flush-error})
+                 (neg? err)
+                 (reduced {:error-code err
+                           :type :write-flush-error})
 
-                  ;; we're done
-                  (= 1 err)
-                  nil
+                 ;; we're done
+                 (= 1 err)
+                 nil
 
-                  ;; continue flushing
-                  (zero? err)
-                  (recur)
+                 ;; continue flushing
+                 (zero? err)
+                 (recur)
 
 
-                  :else
-                  (reduced {:type :write-flush-error}))))]
-        (if (reduced? result)
-          result
-          (let [err (av_write_trailer output-format-context)]
-            (if (zero? err)
-              result
-              (reduced {:error-code err
-                        :type :write-tailer-error}))))))
-     ([result packet]
-      @write-header
-      (let [err (av_write_frame output-format-context packet)
-            result (if (neg? err)
-                     (reduced {:error-code err
-                               :type :write-error})
-                     ;; else
-                     result)]
-        result)))))
+                 :else
+                 (reduced {:type :write-flush-error}))))]
+         result))
+    ([result packet]
+     (let [err (av_write_frame output-format-context packet)
+           result (if (neg? err)
+                    (reduced {:error-code err
+                              :type :write-error})
+                    ;; else
+                    result)]
+       result))))
 
 (defn open-context [fname]
   (let [format-ctx (avformat_alloc_context)
