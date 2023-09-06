@@ -31,3 +31,13 @@ Supported options:
 
          opts (assoc opts :inputs (count inputs))]
      (avfilter/->AVMultiFilterMedia "hstack" opts :media-type/video inputs))))
+
+(defn concat
+  ([opts-or-input & inputs]
+   (let [[opts inputs]
+         (if (fm/media-source? opts-or-input)
+           [nil (cons opts-or-input inputs)]
+           [opts-or-input inputs])]
+     (avfilter/->AVConcatFilterMedia opts inputs))))
+
+
