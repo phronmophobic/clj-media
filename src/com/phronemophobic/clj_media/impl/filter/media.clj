@@ -313,10 +313,11 @@
               codec (avcodec_find_encoder codec-id)
 
               sample_rates (:supported_samplerates codec)
+              default-sample-rate (int 44100)
               sample-rates (if sample_rates
                              (av/pointer-seq sample_rates 4 0)
-                             #{44100})
-              sample-rate (or (some #{44100} sample-rates)
+                             #{default-sample-rate})
+              sample-rate (or (some #{default-sample-rate} sample-rates)
                               (first sample-rates))
 
               sample_fmts (:sample_fmts codec)
@@ -337,8 +338,8 @@
                                          (some (fn [layout]
                                                  (when (zero?
                                                         (av_channel_layout_compare
-                                                         layout
-                                                         needle))
+                                                         (.getPointer layout)
+                                                         (.getPointer needle)))
                                                    layout))
                                                ch-layouts))]
                                  (or (find-layout (:ch-layout input-format))
