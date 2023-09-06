@@ -573,7 +573,34 @@
         ([]
          (rf))
         ([result]
-         (rf result))
+         ;; flush
+         (doseq [buffer-context input-contexts]
+           (av_buffersrc_add_frame buffer-context nil))
+         (let [result
+               (loop [result result]
+                 (let [frame (av/new-frame)
+                       err (av_buffersink_get_frame_flags buffersink-context
+                                                          frame
+                                                          0)]
+                   (cond
+                     (zero? err)
+                     (let [result (rf result frame) ]
+                       (if (reduced? result)
+                         result
+                         (recur result)))
+
+                     (av/eagain? err)
+                     result
+
+                     (av/eof? err)
+                     result
+                     ;; (reduced result)
+
+                     :else
+                     (reduced {:error-code err
+                               :error-msg (av/error->str err)
+                               :type :transcode-error}))))]
+           (rf result)))
         ([result [input-idx input-frame]]
          (let [buffer-context (nth input-contexts input-idx)]
            (av_buffersrc_add_frame buffer-context
@@ -684,7 +711,34 @@
         ([]
          (rf))
         ([result]
-         (rf result))
+         ;; flush
+         (doseq [buffer-context input-contexts]
+           (av_buffersrc_add_frame buffer-context nil))
+         (let [result
+               (loop [result result]
+                 (let [frame (av/new-frame)
+                       err (av_buffersink_get_frame_flags buffersink-context
+                                                          frame
+                                                          0)]
+                   (cond
+                     (zero? err)
+                     (let [result (rf result frame) ]
+                       (if (reduced? result)
+                         result
+                         (recur result)))
+
+                     (av/eagain? err)
+                     result
+
+                     (av/eof? err)
+                     result
+                     ;; (reduced result)
+
+                     :else
+                     (reduced {:error-code err
+                               :error-msg (av/error->str err)
+                               :type :transcode-error}))))]
+           (rf result)))
         ([result [input-index input-frame]]
          (let [buffer-context (nth input-contexts input-index)]
            (av_buffersrc_add_frame buffer-context
