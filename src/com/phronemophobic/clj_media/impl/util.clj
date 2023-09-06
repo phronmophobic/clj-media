@@ -47,6 +47,32 @@
                               colls)
                         colls)))
 
+
+(defn queue
+  ([]
+   clojure.lang.PersistentQueue/EMPTY)
+  ([coll]
+   (into (queue) coll)))
+
+
+(defn ^:private interleave-all* [colls]
+  (lazy-seq
+   (loop [colls colls]
+     (let [coll (peek colls)]
+       (when coll
+         (let [s (seq coll)]
+           (if s
+             (cons (first s)
+                   (interleave-all* (-> colls
+                                        pop
+                                        (conj (rest s)))))
+             (recur (pop colls)))))))))
+
+(defn interleave-all [& colls]
+  (interleave-all* (queue colls)))
+
+
+
 (comment
   (interleave-all-by :i
                      (map (fn [i] {:i i}) (range 2 10))

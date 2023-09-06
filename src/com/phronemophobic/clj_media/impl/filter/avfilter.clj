@@ -12,7 +12,7 @@
             [com.phronemophobic.clj-media.audio :as audio]
             [com.phronemophobic.clj-media.video :as video]
             [com.phronemophobic.clj-media.impl.util
-             :refer [distinct-by]]
+             :refer [distinct-by interleave-all]]
             [com.phronemophobic.clj-media.av.raw :as raw
              :refer :all])
   (:import
@@ -370,8 +370,9 @@
                 (av/->avrational (numerator v)
                                  (denominator v))
                 AV_OPT_SEARCH_CHILDREN))
-#_(defmethod set-option :avoption-type/duration
-  [o _ k v])
+(defmethod set-option :avoption-type/duration
+  [o _ k v]
+  (set-option o :avoption-type/int64 k v))
 (defmethod set-option :avoption-type/int64
   [o _ k v]
   (av_opt_set_int o k v AV_OPT_SEARCH_CHILDREN))
@@ -432,7 +433,12 @@
   [o _ k v])
 (defmethod set-option :avoption-type/bool
   [o _ k v]
-  (av_opt_set_int o k (if v 1 0) AV_OPT_SEARCH_CHILDREN))
+  (av_opt_set_int o k
+                  (case v
+                    (true 1) 1
+                    ;; else
+                    0)
+                  AV_OPT_SEARCH_CHILDREN))
 
 
 (defmulti set-filter-option
@@ -443,11 +449,8 @@
   (doseq [[k v] opts]
     (set-filter-option filter-context filter-name k v)))
 
-(defn supported-filter-options [options]
-  (eduction
-   (filter (fn [option]
-             (get-method set-option (:type option))))
-   options))
+(defn supported-filter-option? [option]
+  (get-method set-option (:type option)))
 
 (defn filter-setters [filter-info]
   (let [filter-name (:name filter-info)
@@ -458,6 +461,7 @@
                     (group-by :unit))]
     `(do
        ~@(eduction
+          (filter supported-filter-option?)
           (map (fn [option]
                  (let [s (:name option)
                        k (str->kw s)
@@ -478,7 +482,7 @@
                                       `(get ~m ~v## ~v##))
                                     v##)]
                         (set-option obj# ~(:type option) ~s ~v##))))))
-          (supported-filter-options options)))))
+          options))))
 
 (defmacro make-setters []
   `(do
@@ -486,26 +490,30 @@
 
 (make-setters)
 
-
-(defn video-filter [input-format filter-name opts]
+(defn video-filter [input-formats filter-name opts]
   (fn [rf]
     (let [filter-graph (avfilter_graph_alloc)
 
-          buffer (avfilter_get_by_name "buffer")
-          _ (when (nil? buffer)
-              (throw (Exception.)))
-          buffer-context (avfilter_graph_alloc_filter filter-graph buffer "src")
-          time-base (:time-base input-format)
-          args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
-                       (:width input-format)
-                       (:height input-format)
-                       (:pix-fmt input-format)
-                       (:num time-base)
-                       (:den time-base))
+          input-contexts
+          (into []
+                (map (fn [input-format]
+                       (let [buffer (avfilter_get_by_name "buffer")
+                               _ (when (nil? buffer)
+                                   (throw (Exception.)))
+                               buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
+                               time-base (:time-base input-format)
+                               args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
+                                            (:width input-format)
+                                            (:height input-format)
+                                            (:pix-fmt input-format)
+                                            (:num time-base)
+                                            (:den time-base))
 
-          err (avfilter_init_str buffer-context args)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
+                               err (avfilter_init_str buffer-context args)
+                               _ (when (not (zero? err))
+                                   (throw (Exception.)))]
+                         buffer-context)))
+                input-formats)
 
           buffersink (avfilter_get_by_name "buffersink")
           _ (when (nil? buffersink)
@@ -521,7 +529,7 @@
           buffersink-context (.getValue buffersink-context*)
 
           pix-fmts (doto (IntByReference.)
-                     (.setValue (:pix-fmt input-format)))
+                     (.setValue (:pix-fmt (first input-formats))))
           _ (av_opt_set_bin buffersink-context "pix_fmts"
                             pix-fmts
                             (* 1 4)
@@ -537,10 +545,12 @@
 
           _ (avfilter_init_str filter-context nil)
 
-          err (avfilter_link buffer-context 0
-                             filter-context 0)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
+          _ (doseq [[i input-context] (map-indexed vector input-contexts)]
+              (let [err (avfilter_link input-context 0
+                                       filter-context i)]
+                (when (not (zero? err))
+                  (throw (Exception.)))))
+
           err (avfilter_link filter-context 0
                              buffersink-context 0)
           _ (when (not (zero? err))
@@ -564,9 +574,10 @@
          (rf))
         ([result]
          (rf result))
-        ([result input-frame]
-         (av_buffersrc_add_frame buffer-context
-                                 input-frame)
+        ([result [input-idx input-frame]]
+         (let [buffer-context (nth input-contexts input-idx)]
+           (av_buffersrc_add_frame buffer-context
+                                   input-frame))
          (loop [result result]
            (let [frame (av/new-frame)
                  err (av_buffersink_get_frame_flags buffersink-context
@@ -591,26 +602,29 @@
                          :type :transcode-error}))))))))
   )
 
-(defn audio-filter [input-format filter-name opts]
+(defn audio-filter [input-formats filter-name opts]
   (fn [rf]
-    (let [
+    (let [filter-graph (avfilter_graph_alloc)
 
-          filter-graph (avfilter_graph_alloc)
+          input-contexts
+          (into []
+                (map (fn [input-format]
+                       (let [buffer (avfilter_get_by_name "abuffer")
+                             _ (when (nil? buffer)
+                                 (throw (Exception.)))
+                             buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
 
-          buffer (avfilter_get_by_name "abuffer")
-          _ (when (nil? buffer)
-              (throw (Exception.)))
-          buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
+                             args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
+                                          (av/ch-layout->str
+                                           (:ch-layout input-format ))
+                                          (:sample-format input-format)
+                                          (:sample-rate input-format))
 
-          args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
-                       (av/ch-layout->str
-                        (:ch-layout input-format ))
-                       (:sample-format input-format)
-                       (:sample-rate input-format))
-          _ (prn args)
-          err (avfilter_init_str buffer-context args)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
+                             err (avfilter_init_str buffer-context args)
+                             _ (when (not (zero? err))
+                                 (throw (Exception.)))]
+                         buffer-context)))
+                input-formats)
 
           buffersink (avfilter_get_by_name "abuffersink")
           _ (when (nil? buffersink)
@@ -626,7 +640,7 @@
           buffersink-context (.getValue buffersink-context*)
 
           sample-fmts (doto (IntByReference.)
-                        (.setValue (:sample-format input-format)))
+                        (.setValue (:sample-format (first input-formats))))
           _ (av_opt_set_bin buffersink-context "sample_fmts"
                             sample-fmts
                             (* 1 4)
@@ -642,10 +656,12 @@
 
           _ (avfilter_init_str filter-context nil)
 
-          err (avfilter_link buffer-context 0
-                             filter-context 0)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
+          _ (doseq [[i input-context] (map-indexed vector input-contexts)]
+              (let [err (avfilter_link input-context 0
+                                       filter-context i)]
+                (when (not (zero? err))
+                  (throw (Exception.)))))
+
           err (avfilter_link filter-context 0
                              buffersink-context 0)
           _ (when (not (zero? err))
@@ -669,9 +685,10 @@
          (rf))
         ([result]
          (rf result))
-        ([result input-frame]
-         (av_buffersrc_add_frame buffer-context
-                                 input-frame)
+        ([result [input-index input-frame]]
+         (let [buffer-context (nth input-contexts input-index)]
+           (av_buffersrc_add_frame buffer-context
+                                  input-frame))
          (loop [result result]
            (let [frame (av/new-frame)
                  err (av_buffersink_get_frame_flags buffersink-context
@@ -696,21 +713,22 @@
                          :type :transcode-error})))))))))
 
 
-(defrecord AVFilterMedia [filter-name opts media-types media]
+(defrecord AVFilterMedia [filter-name opts media-type media]
   fm/IMediaSource
   (-media [this]
     (fm/-media this media))
   (-media [this media]
     (mapv (fn [src]
-            (let [input-format (fm/-format src)
-                  media-type (:media-type input-format)]
-
-              (if (media-types media-type)
+            (let [input-format (fm/-format src)]
+              (if (= media-type (:media-type input-format))
                 (let [f (case media-type
                           :media-type/audio audio-filter
                           :media-type/video video-filter)
-                      frames (sequence (f input-format filter-name opts)
-                                       (fm/-frames src))
+                      frames (sequence
+                              (comp (map (fn [frame]
+                                           [0 frame]))
+                                    (f [input-format] filter-name opts))
+                              (fm/-frames src))
                       first-frame (first frames)
                       output-format
                       (case media-type
@@ -733,15 +751,84 @@
   )
 
 
+(defrecord AVMultiFilterMedia [filter-name opts media-type medias]
+  fm/IMediaSource
+  (-media [this]
+    (let [matches-media-type? #(= media-type
+                                  (:media-type (fm/-format %)))
+          filter-inputs (mapv (fn [media]
+                                (filterv matches-media-type? (fm/-media media)))
+                              medias)
+          _ (when (not (every? #(= 1 (count %))
+                               filter-inputs))
+              (throw (ex-info (str "Filter " filter-name " expects all input media to have exactly one media of type " media-type)
+                              {:filter this})))
+          filter-inputs (into []
+                              (map first)
+                              filter-inputs)
+
+          unfiltered-outputs (into []
+                                   (comp (map fm/-media)
+                                         cat
+                                         (remove matches-media-type?)
+                                         (distinct-by #(System/identityHashCode %)))
+                                   medias)
+
+          make-filter (case media-type
+                        :media-type/audio audio-filter
+                        :media-type/video video-filter)
+          filter-input-formats (mapv fm/-format filter-inputs)
+
+          frames (sequence
+                  (make-filter filter-input-formats filter-name opts)
+                  (apply
+                   interleave-all
+                   (sequence
+                    (map-indexed (fn [input-index src]
+                                   (sequence
+                                    (map (fn [frame]
+                                           [input-index frame]))
+                                    (fm/-frames src))))
+                    filter-inputs)))
+          first-frame (first frames)
+          output-format
+          (case media-type
+            :media-type/audio
+            (assoc (first filter-input-formats)
+                   :ch-layout (:ch_layout first-frame)
+                   :sample-format (:format first-frame)
+                   :sample-rate (:sample_rate first-frame))
+            :media-type/video
+            (assoc (first filter-input-formats)
+                   :width (:width first-frame)
+                   :height (:height first-frame)
+                   :pix-fmt (:format first-frame)))
+          filtered-output (fm/->FrameSource frames
+                                            output-format)]
+      (conj unfiltered-outputs filtered-output))))
+
+
 (defn filter-fn [filter-info]
   (let [opts## 'opts
         opts-or-media## 'opts-or-media
-        media## 'media
+
+        default-input? (and (= 1 (count (:inputs filter-info)))
+                            (= "default" (-> filter-info
+                                             :inputs
+                                             first
+                                             :name)))
+
+        inputs (if default-input?
+                 '[media]
+                 (into []
+                       (comp (map :name)
+                             (map str->symbol))
+                       (:inputs filter-info)))
 
         filter-name (:name filter-info)
         fn-name (str->symbol filter-name)
 
-        supported-options (supported-filter-options (:options filter-info))
+        supported-options (filterv supported-filter-option? (:options filter-info))
         opt-keys (into []
                        (comp (map :name)
                              (map str->symbol))
@@ -757,6 +844,14 @@
 
         doc-string
         (str filter-name ": " (:description filter-info)
+             (when (not default-input?)
+               (str
+                "\n\n"
+                "Inputs: " (str/join
+                            ","
+                            (eduction
+                             (map :name)
+                             (:inputs filter-info)))))
              "\n\n"
              "Supported options:
 
@@ -785,46 +880,45 @@
                                       (eduction
                                        (map :name)
                                        (map #(str "\"" % "\""))
-                                       const)))
-                                ]
+                                       const)))]
                                [(str "type: " (clojure.core/name type))
                                 (when (not (map? default-val))
                                   (str "default: " default-val))
                                 (str "min: " min)
-                                (str "max: " max)]))
-                            )
-                           )))
-               (sort-by :name supported-options))))
+                                (str "max: " max)]))))))
+               (sort-by :name supported-options)))
 
-        media-types (-> filter-info
-                        :inputs
-                        first
-                        :media-type
-                        hash-set)]
+             "\n\n"
+             (let [unsupported-options
+                   (eduction
+                    (remove supported-filter-option?)
+                    (map :name)
+                    (:options filter-info))]
+               (when (seq unsupported-options)
+                 (str
+                  "Unsupported options: "
+                  (clojure.string/join ", "
+                                       unsupported-options)))))
+
+        media-type (-> filter-info
+                       :inputs
+                       first
+                       :media-type)]
     `(defn ~fn-name
        ~doc-string
-       ([]
-        (~fn-name nil nil))
-       ([~opts-or-media##]
-        (let [media?# (fm/media-source? ~opts-or-media##)
-              opts# (if media?#
-                      nil
-                      ~opts-or-media##)
-              media# (if media?#
-                       ~opts-or-media##
-                       nil)]
-          (~fn-name opts# media#)))
-       ([~opts ~media##]
-        (->AVFilterMedia ~filter-name ~opts## ~media-types ~media##)))))
+       ([~@inputs]
+        (~fn-name nil ~@inputs))
+       ([~opts ~@inputs]
+        ~(if (= 1 (count inputs))
+           `(->AVFilterMedia ~filter-name ~opts## ~media-type ~(first inputs))
+           `(->AVMultiFilterMedia ~filter-name ~opts## ~media-type ~inputs))))))
 
 
 (defn supported-filter-type? [filter-info]
-  (println (= 1 (count (:inputs filter-info)))
-       (= 1 (count (:outputs filter-info)))
-       (= (:media-type (first (:outputs filter-info)))
-          (:media-type (first (:inputs filter-info)))))
-  (and (= 1 (count (:inputs filter-info)))
-       (= 1 (count (:outputs filter-info)))
+  (and (= 1 (count (:outputs filter-info)))
+       (every? #(= (:media-type (first (:inputs filter-info)))
+                   (:media-type %))
+               (rest (:inputs filter-info)))
        (= (:media-type (first (:outputs filter-info)))
           (:media-type (first (:inputs filter-info))))))
 
