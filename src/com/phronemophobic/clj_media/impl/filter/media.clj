@@ -8,7 +8,8 @@
             [com.phronemophobic.clj-media.audio :as audio]
             [com.phronemophobic.clj-media.video :as video]
             [com.phronemophobic.clj-media.impl.util
-             :refer [distinct-by]
+             :refer [distinct-by
+                     insert-last]
              :as media-util]
             [com.phronemophobic.clj-media.av.raw :as raw
              :refer :all])
@@ -84,14 +85,6 @@
   ([volumef media]
    (->AdjustVolume volumef media)))
 
-(defn insert-last [x]
-  (fn [rf]
-    (fn
-      ([] (rf))
-      ([result]
-       (let [result (rf result x)]
-         (rf (unreduced result))))
-      ([result input] (rf result input)))))
 
 (defrecord Scale [sx sy media]
   IMediaSource

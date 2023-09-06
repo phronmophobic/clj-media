@@ -12,7 +12,9 @@
             [com.phronemophobic.clj-media.audio :as audio]
             [com.phronemophobic.clj-media.video :as video]
             [com.phronemophobic.clj-media.impl.util
-             :refer [distinct-by interleave-all]]
+             :refer [distinct-by
+                     interleave-all
+                     insert-last]]
             [com.phronemophobic.clj-media.av.raw :as raw
              :refer :all])
   (:import
@@ -789,7 +791,7 @@
                                            [0 frame]))
                                     ;; signal EOF
                                     ;; prevents extra buffering for some filters
-                                    (fm/insert-last [0 nil])
+                                    (insert-last [0 nil])
                                     (f [input-format] filter-name opts))
                               (fm/-frames src))
                       first-frame (first frames)
@@ -1145,7 +1147,7 @@
                                     (sequence (comp
                                                (map (fn [frame]
                                                       [input-idx frame]))
-                                               (fm/insert-last [input-idx nil]))
+                                               (insert-last [input-idx nil]))
                                               (fm/-frames src)))))
                                (sort-by
                                 (fn [src]
