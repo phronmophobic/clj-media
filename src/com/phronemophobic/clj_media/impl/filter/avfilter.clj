@@ -296,6 +296,8 @@
                                  input-frame)
          (loop [result result]
            (let [frame (av/new-frame)
+                 ;; TODO: check av_buffersink_get* to
+                 ;;       to check format types
                  err (av_buffersink_get_frame_flags buffersink-context
                                                     frame
                                                     0)]
@@ -607,6 +609,8 @@
                                    input-frame))
          (loop [result result]
            (let [frame (av/new-frame)
+                 ;; TODO: check av_buffersink_get* to
+                 ;;       to check format types
                  err (av_buffersink_get_frame_flags buffersink-context
                                                     frame
                                                     0)]
@@ -745,6 +749,8 @@
                                   input-frame))
          (loop [result result]
            (let [frame (av/new-frame)
+                 ;; TODO: check av_buffersink_get* to
+                 ;;       to check format types
                  err (av_buffersink_get_frame_flags buffersink-context
                                                     frame
                                                     0)]
