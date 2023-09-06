@@ -787,6 +787,9 @@
                       frames (sequence
                               (comp (map (fn [frame]
                                            [0 frame]))
+                                    ;; signal EOF
+                                    ;; prevents extra buffering for some filters
+                                    (fm/insert-last [0 nil])
                                     (f [input-format] filter-name opts))
                               (fm/-frames src))
                       first-frame (first frames)
