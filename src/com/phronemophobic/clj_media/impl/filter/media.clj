@@ -471,6 +471,16 @@
                     (:media-type (-format src))))
                (-media media)))))
 
+(defrecord Union [medias]
+  IMediaSource
+  (-media [this]
+    (into []
+          (mapcat -media)
+          medias)))
+
+(defn union [& medias]
+  (->Union medias))
+
 (defn ^:private ->url-str [fname]
   (str "file://" (.getCanonicalPath (io/file fname))))
 
