@@ -71,7 +71,6 @@
 (defn interleave-all [& colls]
   (interleave-all* (queue colls)))
 
-;; todo, move to util
 (defn insert-last [x]
   (fn [rf]
     (fn

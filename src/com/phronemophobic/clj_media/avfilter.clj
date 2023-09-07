@@ -41,3 +41,9 @@ Supported options:
      (avfilter/->AVConcatFilterMedia opts inputs))))
 
 
+(defn trim+ [opts media]
+  (->> media
+       (trim opts)
+       (atrim opts)
+       (setpts {:expr "PTS-STARTPTS"})
+       (asetpts {:expr "PTS-STARTPTS"})))

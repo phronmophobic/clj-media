@@ -4,6 +4,8 @@
              :as ff]
             [net.cgrand.xforms :as x]
             [clojure.java.io :as io]
+            [com.phronemophobic.clj-media.impl.datafy
+             :as datafy-media]
             [com.phronemophobic.clj-media.av :as av]
             [com.phronemophobic.clj-media.audio :as audio]
             [com.phronemophobic.clj-media.video :as video]
@@ -192,8 +194,8 @@
 
         pix_fmts (:pix_fmts codec)
         _ (assert pix_fmts)
-        pix-fmts (av/pointer-seq pix_fmts
-                                 4 -1)
+        pix-fmts (datafy-media/pointer-seq pix_fmts
+                                           4 -1)
 
         input-format-acceptable?
         (some #{pix-fmt} pix-fmts)]
@@ -207,12 +209,12 @@
 
         sample_rates (:supported_samplerates codec)
         sample-rates (if sample_rates
-                       (av/pointer-seq sample_rates 4 0)
+                       (datafy-media/pointer-seq sample_rates 4 0)
                        #{44100})
 
         sample_fmts (:sample_fmts codec)
         _ (assert sample_fmts)
-        sample-formats (av/pointer-seq sample_fmts
+        sample-formats (datafy-media/pointer-seq sample_fmts
                                        4 -1)
 
         channel_layouts (:channel_layouts codec)
@@ -220,7 +222,7 @@
         ;; assume that empty channel_layouts
         ;; means any channel layout is supported?
         channel-layouts (when channel_layouts
-                          (av/pointer-seq channel_layouts 8 0))
+                          (datafy-media/pointer-seq channel_layouts 8 0))
 
         input-format-acceptable?
         (and (some #{sample-rate} sample-rates)
@@ -291,7 +293,7 @@
 
               pix_fmts (:pix_fmts codec)
               _ (assert pix_fmts)
-              pix-fmts (av/pointer-seq pix_fmts
+              pix-fmts (datafy-media/pointer-seq pix_fmts
                                        4 -1)
 
               pix-fmt (first pix-fmts)
@@ -308,14 +310,14 @@
               sample_rates (:supported_samplerates codec)
               default-sample-rate (int 44100)
               sample-rates (if sample_rates
-                             (av/pointer-seq sample_rates 4 0)
+                             (datafy-media/pointer-seq sample_rates 4 0)
                              #{default-sample-rate})
               sample-rate (or (some #{default-sample-rate} sample-rates)
                               (first sample-rates))
 
               sample_fmts (:sample_fmts codec)
               _ (assert sample_fmts)
-              sample-formats (av/pointer-seq sample_fmts
+              sample-formats (datafy-media/pointer-seq sample_fmts
                                              4 -1)
               sample-format (first sample-formats)
 
@@ -324,7 +326,7 @@
               ;; assume that empty channel_layouts
               ;; means any channel layout is supported?
               ch-layouts (when ch_layouts
-                           (av/avchannellayout-seq ch_layouts))
+                           (datafy-media/avchannellayout-seq ch_layouts))
               
               channel-layout (if ch-layouts
                                (letfn [(find-layout [needle]

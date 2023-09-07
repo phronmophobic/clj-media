@@ -2,6 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
+            [clojure.datafy :as d]
+            com.phronemophobic.clj-media.impl.datafy
             [clojure.edn :as edn]
             [com.phronemophobic.clong.gen.jna :as gen]
             [com.phronemophobic.clj-media.av.raw :as raw
@@ -560,214 +562,48 @@
           (recur (conj codecs codec))
           codecs)))))
 
-(def media-type->kw
-  {AVMEDIA_TYPE_ATTACHMENT :media-type/attachment
-   AVMEDIA_TYPE_AUDIO      :media-type/audio
-   AVMEDIA_TYPE_DATA       :media-type/data
-   AVMEDIA_TYPE_NB         :media-type/nb
-   AVMEDIA_TYPE_SUBTITLE   :media-type/subtitle
-   AVMEDIA_TYPE_UNKNOWN    :media-type/unknown
-   AVMEDIA_TYPE_VIDEO      :media-type/video})
-
-(def pixel-format->kw
-  (->> (:enums raw/av-api)
-       (filter (fn [enum]
-                 (= "AVPixelFormat" (:enum enum))))
-       (map (juxt :value
-                  (fn [enum]
-                    (keyword "pixel-format"
-                             (-> (subs (:name enum)
-                                       (count "AV_PIX_FMT_"))
-                                 str/lower-case
-                                 (str/replace #"_" "-"))))))
-       (into {})))
-
-(def sample-format->kw
-  (->> (:enums raw/av-api)
-       (filter (fn [enum]
-                 (= "AVSampleFormat" (:enum enum))))
-       (map (juxt :value
-                    (fn [enum]
-                    (keyword "sample-format"
-                             (-> (subs (:name enum)
-                                       (count "AV_SAMPLE_FMT_"))
-                                 str/lower-case
-                                 (str/replace #"_" "-"))))))
-       (into {})))
-
-
-(defn pointer-seq [p size terminal]
-  (loop [offset 0
-         results []]
-    (let [x (case size
-              4 (.getInt p offset)
-              8 (.getLong p offset))]
-      (if (= x terminal)
-        results
-        (recur (+ offset size)
-               (conj results x))))))
-
-(def ^:private avrational-size (.size (AVRational.)))
-(defn avrational-seq [p]
-  (loop [p p
-         results []]
-    (let [ratio (Structure/newInstance AVRationalByReference p)]
-      (if (and (zero? (:num ratio))
-               (zero? (:den ratio)))
-        results
-        (recur (.share p avrational-size)
-               (conj results ratio)))))
-  )
-
-(def ^:private avchannellayout-size (.size (AVChannelLayout.)))
-(defn avchannellayout-seq [p]
-  (loop [p p
-         results []]
-    (let [bs (.getByteArray p 0 avchannellayout-size)]
-      (if (every? zero? bs)
-        results
-        (let [layout (Structure/newInstance AVChannelLayoutByReference p)]
-          (recur (.share p avchannellayout-size)
-                 (conj results layout)))))))
-
-
-
-(def channel-order->kw
-  (->> (:enums raw/av-api)
-       (filter (fn [enum]
-                 (= "AVChannelOrder" (:enum enum))))
-       (map (juxt :value
-                    (fn [enum]
-                    (keyword "channel-order"
-                             (-> (subs (:name enum)
-                                       (count "AV_CHANNEL_ORDER_"))
-                                 str/lower-case
-                                 (str/replace #"_" "-"))))))
-       (into {})))
-
-(def channel->kw
-  (->> (:enums raw/av-api)
-       (filter (fn [enum]
-                 (= "AVChannel" (:enum enum))))
-       (map (juxt :value
-                    (fn [enum]
-                    (keyword "channel"
-                             (-> (subs (:name enum)
-                                       (count "AV_CHAN_"))
-                                 str/lower-case
-                                 (str/replace #"_" "-"))))))
-       (into {})))
-
-(defn avchannellayout->map [p]
-  (let [order (channel-order->kw (:order p))]
-    (merge
-     {:order order
-      :nb-channels (:nb_channels p)}
-     (when (= :channel-order/native)
-       (let [bs (:u p)
-             _ (assert (= 8 (alength bs)))
-             bs (if (= (ByteOrder/nativeOrder)
-                       ByteOrder/LITTLE_ENDIAN)
-                  (byte-array (reverse bs))
-                  bs)
-             mask (BigInteger. 1 bs)
-             channels (into []
-                            (comp (remove (fn [[num kw]]
-                                            (= kw :channel/none)))
-                                  (keep (fn [[num kw]]
-                                          (when (not= (.and (BigInteger/valueOf num) mask)
-                                                      BigInteger/ZERO)
-                                            kw))))
-                            (sort-by first
-                                     channel->kw))]
-         {:channels channels})))))
-
-(defn codec->map [codec]
-  (merge
-   {:name (.getString (:name codec) 0 "ascii")
-    :long-name (.getString (:long_name codec) 0 "ascii")
-    :media-type (media-type->kw (:type codec))
-    :id (:id codec)}
-   (when-let [supported-framerates (:supported_framerates codec)]
-     {:supported-framerates
-      (into []
-            (map (fn [ratio]
-                   (/ (:num ratio)
-                      (:den ratio))))
-            (avrational-seq supported-framerates))})
-   (when-let [pix-fmts (:pix_fmts codec)]
-     {:pixel-formats
-      (into []
-            (map pixel-format->kw)
-            (pointer-seq pix-fmts
-                         4 -1))})
-   (when-let [sample-rates (:supported_samplerates codec)]
-     {:sample-rates
-      (into []
-            (pointer-seq sample-rates 4 0))})
-   (when-let [sample-fmts (:sample_fmts codec)]
-     {:sample-formats
-      (into []
-            (map sample-format->kw)
-            (pointer-seq sample-fmts
-                         4 -1))})
-   (when-let [channel-layouts (:ch_layouts codec)]
-     {:channel-layouts
-      (into []
-            (map avchannellayout->map)
-            (avchannellayout-seq channel-layouts))})))
-
-
-
 
 (defn list-codecs []
   (into []
-        (map codec->map)
+        (map d/datafy)
         (raw-codec-list)))
 
 
-(defn probe
-  "Mostly useless"
-  [fname]
-  (let [pb* (PointerByReference.)
-        url (str "file://" (.getCanonicalPath (io/file fname)))
-        err (avio_open pb* url AVIO_FLAG_READ)
-        pb (.getValue pb*)
+(defn probe [f]
+  (let [f (io/as-file f)
+        path (.getCanonicalPath f)
+        format-context (open-context path)
+        err (avformat_find_stream_info format-context nil)
+        _ (when (not (zero? err))
+            (throw (ex-info "Could not find stream info."
+                            {:error-code err})))
+        num-streams (:nb_streams format-context)
+        streams (.getPointerArray
+                 (.readField format-context "streams")
+                 0 num-streams)]
+    {:streams
+     (into []
+           (comp
+            (map (fn [stream]
+                   (let [stream+ (Structure/newInstance AVStreamByReference
+                                                        stream)
+                         stream-index (:index stream+)
 
-        fmt* (PointerByReference.)]
-    (when (neg? err)
-      (throw (Exception. "Error opening io.")))
-    (try
-      (let [err (av_probe_input_buffer pb fmt* url nil 0 0)]
-        (when (neg? err)
-          (throw (Exception. "Probe error.")))
-        (doto (Structure/newInstance AVInputFormatByReference
-                                     (.getValue fmt*))
-          (.read)))
-      (finally
-        (avio_closep pb*)))))
+                         codec-parameters (:codecpar stream+)
+                         codec-id (:codec_id codec-parameters)
 
-(defn probe2
-  "Mostly useless"
-  [fname]
-  (let [ctx* (PointerByReference.)
-        url (str "file://" (.getCanonicalPath (io/file fname)))
-        err (avformat_open_input ctx* url nil nil)]
-    (when (neg? err)
-      (throw (Exception.)))
+                         media-type (:codec_type codec-parameters)
 
-    (let [ctx (Structure/newInstance AVFormatContextByReference
-                                     (.getValue ctx*))
-          err (avformat_find_stream_info ctx nil)]
-
-      (loop [tag nil]
-        (let [tag (av_dict_iterate (:metadata ctx) tag)]
-          (when tag
-            (println
-             (.getString (.getPointer (:key tag))
-                         0 "ascii")
-             ":"
-             (.getString (.getPointer (:value tag))
-                         0 "ascii"))
-            (recur tag)))))))
-
+                         format (merge
+                                 {:time-base (d/datafy (:time_base stream+))
+                                  :estimated-duration (:duration stream+)
+                                  :stream-index (:index stream+)}
+                                 (let [num-frames (:nb_frames stream+)]
+                                   (when (not (zero? num-frames))
+                                     {:num-frames num-frames}))
+                                 (when (= :media-type/video
+                                          media-type)
+                                   {:average-frame-rate (:avg_frame_rate stream+)})
+                                 (d/datafy codec-parameters))]
+                     format))))
+           streams)}))

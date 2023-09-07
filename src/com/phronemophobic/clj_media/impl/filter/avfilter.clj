@@ -4,8 +4,9 @@
             [com.phronemophobic.clj-media.impl.filter.media
              :as fm]
             [clojure.string :as str]
-            [clojure.core.protocols :as p]
             [clojure.datafy :as d]
+            [com.phronemophobic.clj-media.impl.datafy
+             :as datafy-media]
             [net.cgrand.xforms :as x]
             [clojure.java.io :as io]
             [com.phronemophobic.clj-media.av :as av]
@@ -19,8 +20,6 @@
              :refer :all])
   (:import
    java.io.PushbackReader
-   java.nio.ByteOrder
-   java.nio.ByteBuffer
    com.sun.jna.Memory
    com.sun.jna.Pointer
    com.sun.jna.ptr.PointerByReference
@@ -33,146 +32,10 @@
 
 (raw/import-structs!)
 
-(def avoption-type->kw
-  (->> (:enums raw/av-api)
-       (filter (fn [enum]
-                 (= "AVOptionType" (:enum enum))))
-       (map (juxt :value
-                  (fn [enum]
-                    (keyword "avoption-type"
-                             (-> (subs (:name enum)
-                                       (count "AV_OPT_TYPE_"))
-                                 str/lower-case
-                                 (str/replace #"_" "-"))))))
-       (into {})))
-
-(defmulti read-bytes (fn [type bs]
-                       type))
-(defmethod read-bytes :avoption-type/int64
-  [_ bs]
-  (let [_ (assert (= 8 (alength bs)))
-        bs (if (= (ByteOrder/nativeOrder)
-                  ByteOrder/LITTLE_ENDIAN)
-             (byte-array (reverse bs))
-             bs)
-        val (BigInteger. bs)]
-    val))
-
-(defmethod read-bytes :avoption-type/int
-  [_ bs]
-  (-> (ByteBuffer/wrap bs)
-      (.order (ByteOrder/nativeOrder))
-      (.getInt)))
-
-(defmethod read-bytes :avoption-type/bool
-  [_ bs]
-  (let [num (read-bytes :avoption-type/uint64 bs)]
-    (not (zero? num))))
-
-(defmethod read-bytes :avoption-type/uint64
-  [_ bs]
-  (let [_ (assert (= 8 (alength bs)))
-        bs (if (= (ByteOrder/nativeOrder)
-                  ByteOrder/LITTLE_ENDIAN)
-             (byte-array (reverse bs))
-             bs)
-        val (BigInteger. 1 bs)]
-    val))
-
-(defmethod read-bytes :avoption-type/double
-  [_ bs]
-  (-> (ByteBuffer/wrap bs)
-      (.order (ByteOrder/nativeOrder))
-      (.getDouble)))
-
-(defmethod read-bytes :avoption-type/float
-  [_ bs]
-  (-> (ByteBuffer/wrap bs)
-      (.order (ByteOrder/nativeOrder))
-      (.getFloat)))
-
-(defmethod read-bytes :avoption-type/string
-  [_ bs]
-  (let [ptr-native (read-bytes :avoption-type/int64 bs )]
-    (when (not (zero? ptr-native))
-      (let [p (Pointer.  ptr-native)]
-        (.getString p 0 "ascii")))))
-
-(defmethod read-bytes :default
-  [type bs]
-  {:type type
-   :bs bs
-   :float (read-bytes :avoption-type/float bs)
-   :double (read-bytes :avoption-type/double bs)
-   :long (read-bytes :avoption-type/int64 bs)
-   :int (read-bytes :avoption-type/int bs)})
-
-(extend-protocol p/Datafiable
-  AVOptionByReference
-  (datafy [opt]
-    (let [option-type (avoption-type->kw (:type opt))]
-      (merge
-       {:name (.getString (.getPointer (:name opt)) 0 "ascii")
-        :offset (:offset opt)
-        :type option-type}
-       (when-let [help (:help opt)]
-         {:help (.getString (.getPointer help) 0 "ascii")})
-       (when-let [default (:default_val opt)]
-         {:default-val (read-bytes option-type default)})
-       (when-let [min (:min opt)]
-         {:min min})
-       (when-let [max (:max opt)]
-         {:max max})
-       (when-let [unit (:unit opt)]
-         {:unit (.getString (.getPointer unit) 0 "ascii")})))))
-
-(defn filter-options [flt]
-  (let [cls (:priv_class flt)]
-    (when cls
-      (let [cls* (PointerByReference. (.getPointer cls))]
-        (loop [prev nil
-               opts []]
-          (let [o (av_opt_next cls* prev)]
-            (if o
-              (recur o (conj opts (d/datafy o)))
-              opts)))))))
 
 
 
-(extend-protocol p/Datafiable
-  AVFilterByReference
-  (datafy [flt]
-    (merge
-     {:name (.getString (.getPointer (:name flt)) 0 "ascii")
-      :options (filter-options flt)}
-     (when-let [description (.getPointer (:description flt))]
-       {:description (.getString description 0 "ascii")})
-     (when-let [inputs (:inputs flt)]
-       (let [size (avfilter_filter_pad_count flt 0)]
-         {:inputs
-          (into []
-                (map (fn [i]
-                       (let [name (avfilter_pad_get_name inputs i)
-                             type (avfilter_pad_get_type inputs i)]
-                         {:media-type
-                          (condp = type
-                            AVMEDIA_TYPE_AUDIO :media-type/audio
-                            AVMEDIA_TYPE_VIDEO :media-type/video)
-                          :name name})))
-                (range size))}))
-     (when-let [outputs (:outputs flt)]
-       (let [size (avfilter_filter_pad_count flt 1)]
-         {:outputs
-          (into []
-                (map (fn [i]
-                       (let [name (avfilter_pad_get_name outputs i)
-                             type (avfilter_pad_get_type outputs i)]
-                         {:media-type
-                          (condp = type
-                            AVMEDIA_TYPE_AUDIO :media-type/audio
-                            AVMEDIA_TYPE_VIDEO :media-type/video)
-                          :name name})))
-                (range size))})))))
+
 
 
 (defn list-filters []
@@ -183,163 +46,6 @@
           (recur (conj flts (d/datafy flt)))
           flts)))))
 
-
-(defn print-options [obj]
-  (loop [prev nil]
-    (let [opt (av_opt_next obj prev)]
-      (when opt
-        (clojure.pprint/pprint
-         (let [option-type (avoption-type->kw (:type opt))
-               name (.getString (.getPointer (:name opt)) 0 "ascii")
-               val
-               (case option-type
-                 (:avoption-type/int64
-                  :avoption-type/int)
-                 (let [num* (LongByReference.)]
-                   (av_opt_get_int obj (:name opt) AV_OPT_SEARCH_CHILDREN num*)
-                   (.getValue num*))
-
-                 (:avoption-type/double
-                  :avoption-type/float)
-                 (let [num* (DoubleByReference.)]
-                   (av_opt_get_double obj (:name opt) AV_OPT_SEARCH_CHILDREN num*)
-                   (.getValue num*))
-
-                 ;; else
-                 (let [out (ByteByReference.)]
-                   (av_opt_get obj (:name opt) AV_OPT_SEARCH_CHILDREN out)
-                   (.getValue out)))]
-          {:name name
-           :type option-type
-           :val val})))
-      )))
-
-(defn edge-detect [input-format opts]
-  (fn [rf]
-    (let [
-
-          filter-graph (avfilter_graph_alloc)
-
-          buffer (avfilter_get_by_name "buffer")
-          _ (when (nil? buffer)
-              (throw (Exception.)))
-          buffer-context (avfilter_graph_alloc_filter filter-graph buffer "src")
-          time-base (:time-base input-format)
-          args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
-                       (:width input-format)
-                       (:height input-format)
-                       (:pix-fmt input-format)
-                       (:num time-base)
-                       (:den time-base))
-
-          err (avfilter_init_str buffer-context args)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
-
-          buffersink (avfilter_get_by_name "buffersink")
-          _ (when (nil? buffersink)
-              (throw (Exception.)))
-          buffersink-context* (PointerByReference.)
-          _ (avfilter_graph_create_filter buffersink-context*
-                                          buffersink
-                                          nil
-                                          nil
-                                          nil
-                                          filter-graph)
-
-          buffersink-context (.getValue buffersink-context*)
-
-          pix-fmts (doto (IntByReference.)
-                     (.setValue (:pix-fmt input-format)))
-          _ (av_opt_set_bin buffersink-context "pix_fmts"
-                            pix-fmts
-                            (* 1 4)
-                            AV_OPT_SEARCH_CHILDREN)
-
-          ;; create the edge detecting filter
-          edgedetect-filter (avfilter_graph_alloc_filter
-                             filter-graph
-                             (avfilter_get_by_name "edgedetect")
-                             nil)
-          _ (assert edgedetect-filter)
-          _ (av_opt_set_int edgedetect-filter
-                            "mode"
-                            2
-                            AV_OPT_SEARCH_CHILDREN)
-          _ (avfilter_init_str edgedetect-filter nil)
-          _ (print-options edgedetect-filter)
-
-          err (avfilter_link buffer-context 0
-                             edgedetect-filter 0)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
-          err (avfilter_link edgedetect-filter 0
-                             buffersink-context 0)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
-
-          err (avfilter_graph_config filter-graph nil)
-
-          filter-graph* (doto (PointerByReference.)
-                          (.setValue (.getPointer filter-graph)))]
-      (.register av/cleaner filter-graph
-                 (fn []
-                   (avfilter_graph_free filter-graph*)))
-
-      (when (not (>= err 0))
-        (throw (Exception.)))
-      (fn
-        ([]
-         (rf))
-        ([result]
-         (rf result))
-        ([result input-frame]
-         (av_buffersrc_add_frame buffer-context
-                                 input-frame)
-         (loop [result result]
-           (let [frame (av/new-frame)
-                 ;; TODO: check av_buffersink_get* to
-                 ;;       to check format types
-                 err (av_buffersink_get_frame_flags buffersink-context
-                                                    frame
-                                                    0)]
-             (cond
-               (zero? err)
-               (let [result (rf result frame) ]
-                 (if (reduced? result)
-                   result
-                   (recur result)))
-
-               (av/eagain? err)
-               result
-
-               (av/eof? err)
-               (reduced result)
-
-               :else
-               (reduced {:error-code err
-                         :error-msg (av/error->str err)
-                         :type :transcode-error}))))))))
-  )
-
-
-
-(defrecord EdgeDetect [opts media]
-  fm/IMediaSource
-  (-media [this]
-    (mapv (fn [src]
-            (let [input-format (fm/-format src)]
-              (case (:media-type input-format)
-                :media-type/audio src
-
-                :media-type/video
-                (let []
-                  (fm/->FrameSource (sequence
-                                     (edge-detect input-format opts)
-                                     (fm/-frames src))
-
-                                    input-format)))))
-          (fm/-media media))))
 
 (defn str->kw [s]
   (-> s
@@ -405,11 +111,11 @@
         (into {}
               (map (fn [[k v]]
                      [v k]))
-              av/sample-format->kw)
+              datafy-media/sample-format->kw)
         fmt (or
              (get kw->sample-format v)
              v)]
-    (when-not (contains? av/sample-format->kw fmt)
+    (when-not (contains? datafy-media/sample-format->kw fmt)
       (throw (ex-info "Invalid sample format."
                       {:o o
                        :k k
@@ -421,11 +127,11 @@
         (into {}
               (map (fn [[k v]]
                      [v k]))
-              av/pixel-format->kw)
+              datafy-media/pixel-format->kw)
         pix-fmt (or
                  (get kw->pixel-format v)
                  v)]
-    (when-not (contains? av/pixel-format->kw pix-fmt)
+    (when-not (contains? datafy-media/pixel-format->kw pix-fmt)
       (throw (ex-info "Invalid pixel format."
                       {:o o
                        :k k
