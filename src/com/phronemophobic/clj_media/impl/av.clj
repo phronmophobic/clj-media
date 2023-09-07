@@ -580,30 +580,33 @@
         num-streams (:nb_streams format-context)
         streams (.getPointerArray
                  (.readField format-context "streams")
-                 0 num-streams)]
-    {:streams
-     (into []
-           (comp
-            (map (fn [stream]
-                   (let [stream+ (Structure/newInstance AVStreamByReference
-                                                        stream)
-                         stream-index (:index stream+)
+                 0 num-streams)
 
-                         codec-parameters (:codecpar stream+)
-                         codec-id (:codec_id codec-parameters)
+        streams-info
+        (into []
+              (comp
+               (map (fn [stream]
+                      (let [stream+ (Structure/newInstance AVStreamByReference
+                                                           stream)
+                            stream-index (:index stream+)
 
-                         media-type (:codec_type codec-parameters)
+                            codec-parameters (:codecpar stream+)
+                            codec-id (:codec_id codec-parameters)
 
-                         format (merge
-                                 {:time-base (d/datafy (:time_base stream+))
-                                  :estimated-duration (:duration stream+)
-                                  :stream-index (:index stream+)}
-                                 (let [num-frames (:nb_frames stream+)]
-                                   (when (not (zero? num-frames))
-                                     {:num-frames num-frames}))
-                                 (when (= :media-type/video
-                                          media-type)
-                                   {:average-frame-rate (:avg_frame_rate stream+)})
-                                 (d/datafy codec-parameters))]
-                     format))))
-           streams)}))
+                            media-type (:codec_type codec-parameters)
+
+                            format (merge
+                                    {:time-base (d/datafy (:time_base stream+))
+                                     :estimated-duration (:duration stream+)
+                                     :stream-index (:index stream+)}
+                                    (let [num-frames (:nb_frames stream+)]
+                                      (when (not (zero? num-frames))
+                                        {:num-frames num-frames}))
+                                    (when (= :media-type/video
+                                             media-type)
+                                      {:average-frame-rate (:avg_frame_rate stream+)})
+                                    (d/datafy codec-parameters))]
+                        format))))
+              streams)]
+    (avformat_close_input (PointerByReference. (.getPointer format-context)))
+    {:streams streams-info}))

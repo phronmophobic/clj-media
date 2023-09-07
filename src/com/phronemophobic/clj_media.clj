@@ -72,7 +72,7 @@
 
 (comment
   (av/probe "my-video.mp4")
-  (probe (file "my-video.mp4"))
+  (probe "my-video.mp4")
   (av/probe3  "my-video.mp4")
 
   
