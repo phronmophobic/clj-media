@@ -438,8 +438,8 @@
         err)
 
     (avio_closep (doto (PointerByReference.)
-                   (.setValue (:pb output-format-context)))))
-  )
+                   (.setValue (:pb output-format-context))))
+    (avformat_free_context output-format-context)))
 
 (defn filter-audio [media]
   (reify
