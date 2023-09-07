@@ -169,14 +169,6 @@
                       (->FrameSource frames format)))))
             streams))))
 
-(defrecord Union [a b]
-  IMediaSource
-  (-media [this]
-    (into []
-          cat
-          [(-media a)
-           (-media b)])))
-
 (defn audio-pts []
   (comp
    (x/reductions
@@ -471,7 +463,8 @@
   IMediaSource
   (-media [this]
     (into []
-          (mapcat -media)
+          (comp (mapcat -media)
+                (distinct-by #(System/identityHashCode %)))
           medias)))
 
 (defn union [& medias]
