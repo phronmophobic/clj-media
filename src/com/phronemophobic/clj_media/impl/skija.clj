@@ -1,4 +1,4 @@
-(ns com.phronemophobic.clj-media.skija
+(ns com.phronemophobic.clj-media.impl.skija
   (:require [membrane.ui :as ui]
             [membrane.skija :as skija]
             [avclj :as avclj]

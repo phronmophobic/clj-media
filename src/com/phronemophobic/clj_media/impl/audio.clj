@@ -1,7 +1,7 @@
-(ns com.phronemophobic.clj-media.audio
+(ns com.phronemophobic.clj-media.impl.audio
   (:require [clojure.java.io :as io]
-            [com.phronemophobic.clj-media.av :as av]
-            [com.phronemophobic.clj-media.av.raw :as raw
+            [com.phronemophobic.clj-media.impl.av :as av]
+            [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [clojure.pprint :refer [pprint]])
   (:import

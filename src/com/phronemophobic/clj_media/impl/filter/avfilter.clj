@@ -9,14 +9,14 @@
              :as datafy-media]
             [net.cgrand.xforms :as x]
             [clojure.java.io :as io]
-            [com.phronemophobic.clj-media.av :as av]
-            [com.phronemophobic.clj-media.audio :as audio]
-            [com.phronemophobic.clj-media.video :as video]
+            [com.phronemophobic.clj-media.impl.av :as av]
+            [com.phronemophobic.clj-media.impl.audio :as audio]
+            [com.phronemophobic.clj-media.impl.video :as video]
             [com.phronemophobic.clj-media.impl.util
              :refer [distinct-by
                      interleave-all
                      insert-last]]
-            [com.phronemophobic.clj-media.av.raw :as raw
+            [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all])
   (:import
    java.io.PushbackReader

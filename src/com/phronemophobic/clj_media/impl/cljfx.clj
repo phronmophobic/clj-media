@@ -1,4 +1,4 @@
-(ns com.phronemophobic.clj-media.cljfx
+(ns com.phronemophobic.clj-media.impl.cljfx
   (:require [membrane.ui :as ui]
             membrane.component
             [membrane.cljfx :as cljfx]

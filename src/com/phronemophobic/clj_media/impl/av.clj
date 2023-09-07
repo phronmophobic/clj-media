@@ -1,4 +1,4 @@
-(ns com.phronemophobic.clj-media.av
+(ns com.phronemophobic.clj-media.impl.av
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
@@ -6,7 +6,7 @@
             com.phronemophobic.clj-media.impl.datafy
             [clojure.edn :as edn]
             [com.phronemophobic.clong.gen.jna :as gen]
-            [com.phronemophobic.clj-media.av.raw :as raw
+            [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [com.rpl.specter :as specter])
   (:import

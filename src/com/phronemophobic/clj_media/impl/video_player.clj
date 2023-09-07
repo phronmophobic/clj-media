@@ -1,4 +1,4 @@
-(ns com.phronemophobic.clj-media.video-player
+(ns com.phronemophobic.clj-media.impl.video-player
   (:require [membrane.ui :as ui]
             [membrane.basic-components :as basic]
             [avclj.avformat :as avformat]
@@ -7,7 +7,7 @@
              :refer [<!! >!! <! >! go]]
             [avclj :as avclj]
             [membrane.skia :as skia]
-            [com.phronemophobic.clj-media.skia
+            [com.phronemophobic.clj-media.impl.skia
              :as media]
             [membrane.component :as component
              :refer [defui defeffect]])

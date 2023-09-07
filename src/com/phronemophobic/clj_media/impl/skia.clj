@@ -1,4 +1,4 @@
-(ns com.phronemophobic.clj-media.skia
+(ns com.phronemophobic.clj-media.impl.skia
   (:require [membrane.ui :as ui]
             
             [membrane.skia :as skia]
@@ -205,4 +205,27 @@
                (map (fn [i]
                       (ui/padding 10 (ui/label (str "frame: " i))))
                     (range 120))
-               100 100))
+               100 100)
+  )
+
+(comment
+
+  ;; pretty sure the result creates bindings primarily for JNI
+  ;; 
+  (import 'org.bytedeco.javacpp.Loader)
+
+  (import 'org.bytedeco.ffmpeg.global.avcodec)
+  (import 'org.bytedeco.ffmpeg.global.avutil)
+  
+  (import 'org.bytedeco.ffmpeg.global.avcodec)
+  (import 'org.bytedeco.ffmpeg.global.avdevice)
+  (import 'org.bytedeco.ffmpeg.global.avfilter)
+  (import 'org.bytedeco.ffmpeg.global.avformat)
+  (import 'org.bytedeco.ffmpeg.global.avutil)
+  (import 'org.bytedeco.ffmpeg.global.postproc)
+  (import 'org.bytedeco.ffmpeg.global.swresample)
+  (import 'org.bytedeco.ffmpeg.global.swscale)
+
+  (import 'org.bytedeco.ffmpeg.avcodec.AVHWAccel)
+  
+  ,)

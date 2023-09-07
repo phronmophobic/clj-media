@@ -1,7 +1,7 @@
-(ns com.phronemophobic.clj-media.video
+(ns com.phronemophobic.clj-media.impl.video
   (:require [clojure.java.io :as io]
-            [com.phronemophobic.clj-media.av :as av]
-            [com.phronemophobic.clj-media.av.raw :as raw
+            [com.phronemophobic.clj-media.impl.av :as av]
+            [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [clojure.pprint :refer [pprint]])
   (:import
@@ -39,7 +39,6 @@
                        #_#_(.readField time_base "num")
                        (.readField time_base "den"))
           
-          _ (prn args)
           err (avfilter_init_str buffer-context args)
           _ (when (not (zero? err))
               (throw (Exception.)))
@@ -70,7 +69,6 @@
               (throw (Exception.)))
           err (avfilter_graph_config filter-graph nil)]
       (when (not (>= err 0))
-        (prn err)
         (throw (Exception.)))
       (fn
         ([]
@@ -157,7 +155,6 @@
               (throw (Exception.)))
           err (avfilter_graph_config filter-graph nil)]
       (when (not (>= err 0))
-        (prn err)
         (throw (Exception.)))
       (fn
         ([]
@@ -213,7 +210,6 @@
                        (.readField time-base "num")
                        (.readField time-base "den"))
           
-          _ (prn args)
           err (avfilter_init_str buffer-context args)
           _ (when (not (zero? err))
               (throw (Exception.)))
@@ -244,7 +240,6 @@
               (throw (Exception.)))
           err (avfilter_graph_config filter-graph nil)]
       (when (not (>= err 0))
-        (prn err)
         (throw (Exception.)))
       (fn
         ([]
@@ -389,3 +384,54 @@
     (when (neg? err)
       (throw (Exception. "Could not initialize stream params")))
     encoder-context))
+
+
+(def  SWS_FAST_BILINEAR     1)
+(def  SWS_BILINEAR          2)
+(def  SWS_BICUBIC           4)
+(def  SWS_X                 8)
+(def  SWS_POINT          0x10)
+(def  SWS_AREA           0x20)
+(def  SWS_BICUBLIN       0x40)
+(def  SWS_GAUSS          0x80)
+(def  SWS_SINC          0x100)
+(def  SWS_LANCZOS       0x200)
+(def  SWS_SPLINE        0x400)
+
+(defn swscale
+  ([input-format output-format]
+   (swscale input-format output-format nil))
+  ([input-format output-format opts]
+   (let [flags (or (:flags opts)
+                   SWS_BILINEAR)
+         sws-ctx (sws_getContext (:width input-format)
+                                 (:height input-format)
+                                 (:pix-fmt input-format)
+                                 (:width output-format)
+                                 (:height output-format)
+                                 (:pix-fmt output-format)
+                                 flags
+                                 nil
+                                 nil
+                                 nil)
+         _ (when (nil? sws-ctx)
+             (throw (Exception. "Error creating sws context.")))
+         sws-ctx-ptr (Pointer/nativeValue sws-ctx)
+         _ (.register av/cleaner sws-ctx
+                      (fn []
+                        (sws_freeContext sws-ctx-ptr)))]
+     (fn [rf]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input-frame]
+          (if input-frame
+            (let [output-frame (av/new-frame)
+                  err (sws_scale_frame sws-ctx output-frame input-frame)]
+              (when (neg? err)
+                (throw (Exception. "Error scaling frame.")))
+              (.writeField output-frame "pts" (:pts input-frame))
+              (rf result output-frame))
+            ;; else nothing to do
+            result)))))))
+

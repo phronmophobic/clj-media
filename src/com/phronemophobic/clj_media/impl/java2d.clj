@@ -1,10 +1,10 @@
-(ns com.phronemophobic.clj-media.java2d
+(ns com.phronemophobic.clj-media.impl.java2d
   (:require [membrane.ui :as ui]
             [membrane.java2d :as java2d]
             [clojure.java.io :as io]
-            [com.phronemophobic.clj-media.av :as av]
-            [com.phronemophobic.clj-media.video :as video]
-            [com.phronemophobic.clj-media.av.raw :as raw
+            [com.phronemophobic.clj-media.impl.av :as av]
+            [com.phronemophobic.clj-media.impl.video :as video]
+            [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [tech.v3.tensor :as dtt]
 

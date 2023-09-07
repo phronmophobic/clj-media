@@ -1,4 +1,4 @@
-(ns com.phronemophobic.clj-media.av.raw
+(ns com.phronemophobic.clj-media.impl.raw
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
@@ -160,4 +160,4 @@
 
 (defonce ^:private generated-api (gen/def-api lib av-api))
 (defmacro import-structs! []
-  `(gen/import-structs! av-api "com.phronemophobic.clj_media.av.raw.structs"))
+  `(gen/import-structs! av-api "com.phronemophobic.clj_media.impl.raw.structs"))
