@@ -2,16 +2,36 @@
   (:require [clojure.string :as str]
             [clojure.datafy :as d]
             [clojure.core.protocols :as p]
+            [com.phronemophobic.clj-media.impl.util
+             :refer [normalize-str]]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all])
   (:import
    java.nio.ByteOrder
    java.nio.ByteBuffer
+   com.sun.jna.Memory
    com.sun.jna.Structure
    com.sun.jna.Pointer
    com.sun.jna.ptr.PointerByReference))
 
 (raw/import-structs!)
+
+(defn ch-layout->str [ch-layout]
+  (let [buf (Memory. 512)
+        err (av_channel_layout_describe (.getPointer ch-layout) buf (.size buf))]
+    (when (neg? err)
+      (throw (ex-info "Could not encode ch-layout."
+                      {:ch-layout ch-layout
+                       :err err})))
+    (String. (.getByteArray buf 0 err) "ascii")))
+
+(defn str->ch-layout [s]
+  (let [ch-layout (AVChannelLayoutByReference.)
+        err (av_channel_layout_from_string ch-layout s)]
+    (when (neg? err)
+      (throw (ex-info "Invalid channel layout."
+                      {:channel-layout-str s})))
+    ch-layout))
 
 (defn pointer-seq [p size terminal]
   (loop [offset 0
@@ -206,9 +226,15 @@
                     (keyword "pixel-format"
                              (-> (subs (:name enum)
                                        (count "AV_PIX_FMT_"))
-                                 str/lower-case
-                                 (str/replace #"_" "-"))))))
+                                 normalize-str)))))
        (into {})))
+
+(def kw->pixel-format
+  (into
+   {}
+   (map (fn [[k v]]
+          [v k]))
+   pixel-format->kw))
 
 (def sample-format->kw
   (->> (:enums raw/av-api)
@@ -219,9 +245,15 @@
                     (keyword "sample-format"
                              (-> (subs (:name enum)
                                        (count "AV_SAMPLE_FMT_"))
-                                 str/lower-case
-                                 (str/replace #"_" "-"))))))
+                                 normalize-str)))))
        (into {})))
+
+(def kw->sample-format
+  (into
+   {}
+   (map (fn [[k v]]
+          [v k]))
+   sample-format->kw))
 
 
 
@@ -258,6 +290,7 @@
   (let [order (channel-order->kw (:order p))]
     (merge
      {:order order
+      :name (ch-layout->str p)
       :nb-channels (:nb_channels p)}
      (when (= :channel-order/native)
        (let [bs (:u p)

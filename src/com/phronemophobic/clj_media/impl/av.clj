@@ -35,14 +35,6 @@
     (.writeField "num" (int num))
     (.writeField "den" (int den))))
 
-(defn ch-layout->str [ch-layout]
-  (let [buf (Memory. 512)
-        err (av_channel_layout_describe (.getPointer ch-layout) buf (.size buf))]
-    (when (neg? err)
-      (throw (ex-info "Could not encode ch-layout."
-                      {:ch-layout ch-layout
-                       :err err})))
-    (String. (.getByteArray buf 0 err) "ascii")))
 
 (defn error->str [err]
   (let [buf (byte-array 255)]

@@ -4,6 +4,7 @@
              :as ff]
             [net.cgrand.xforms :as x]
             [clojure.java.io :as io]
+            [clojure.core.protocols :as p]
             [com.phronemophobic.clj-media.impl.datafy
              :as datafy-media]
             [com.phronemophobic.clj-media.impl.av :as av]
@@ -29,12 +30,12 @@
 
 ;; All frames from a frame source should the same format
 (defprotocol IFrameSource
-  (-frames [this] [this src])
-  (-format [this] [this src]))
+  (-frames [this])
+  (-format [this]))
 
 
 (defprotocol IMediaSource
-  (-media [this] [this src]
+  (-media [this]
     "Returns a collection of IFrameSource"))
 
 (defn media-source? [x]
@@ -75,8 +76,7 @@
 
 (defrecord AdjustVolume [volumef media]
   IMediaSource
-  (-media [this] (-media this media))
-  (-media [this media]
+  (-media [this]
     (into []
           (map-audio ff/adjust-volume)
           media)))
@@ -128,7 +128,6 @@
                    [format-context])]
       (into []
             (comp
-             (distinct-by #(System/identityHashCode %))
              (map (fn [stream]
                     (let [stream+ (Structure/newInstance AVStreamByReference
                                                          stream)
@@ -163,7 +162,11 @@
                                                   (= (:stream_index packet)
                                                      stream-index)))
                                         (insert-last nil)
-                                        (av/decode-frame decoder-context))
+                                        (av/decode-frame decoder-context)
+                                        (map (fn [frame]
+                                               (doto frame
+                                                 (.writeField "time_base"
+                                                              (:time_base stream+))))))
                                  
                                   packets)]
                       (->FrameSource frames format)))))
@@ -508,3 +511,54 @@
                   ;; (filter-audio)
                   )
               "union.mp4")))
+
+(deftype FramesReducible [media stream audio-format video-format]
+  clojure.lang.IReduceInit
+  (reduce [_ f init]
+    (let [stream
+          (case stream
+            :audio (some #(when (audio? %) %) (-media media))
+            :video (some #(when (video? %) %) (-media media))
+            ;; else
+            (nth (-media media) stream))
+          _ (when (not stream)
+              (throw (ex-info "Stream not found."
+                              {:media media
+                               :stream stream})))
+          input-format (-format stream)
+          formatter
+          (case (:media-type input-format)
+            :media-type/audio (if audio-format
+                                (comp
+                                 (insert-last nil)
+                                 (audio/resample2 input-format
+                                                  {:ch-layout (datafy-media/str->ch-layout
+                                                               (:ch-layout audio-format))
+                                                   :sample-format (int (datafy-media/kw->sample-format
+                                                                        (:sample-format audio-format)))
+                                                   :sample-rate (int (:sample-rate audio-format))}))
+                                identity)
+            :media-type/video (if video-format
+                                (comp
+                                 (insert-last nil)
+                                 (video/transcode-frame3
+                                  input-format
+                                  (datafy-media/kw->pixel-format
+                                   (:pix-fmt video-format))))
+                                identity))]
+      (transduce
+       formatter
+       (completing f)
+       init
+       (-frames stream)))))
+
+(defn frames-reducible
+  ([media stream]
+   (frames-reducible media stream nil))
+  ([media stream {:keys [audio-format
+                         video-format]
+                  :as opts}]
+   (->FramesReducible media
+                      stream
+                      audio-format
+                      video-format)))

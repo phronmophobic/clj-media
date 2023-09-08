@@ -15,6 +15,8 @@
             [com.phronemophobic.clj-media.impl.util
              :refer [distinct-by
                      interleave-all
+                     str->kw
+                     str->symbol
                      insert-last]]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all])
@@ -32,12 +34,6 @@
 
 (raw/import-structs!)
 
-
-
-
-
-
-
 (defn list-filters []
   (let [iter-data (PointerByReference. Pointer/NULL)]
     (loop [flts []]
@@ -47,17 +43,7 @@
           flts)))))
 
 
-(defn str->kw [s]
-  (-> s
-      str/lower-case
-      (str/replace #"_" "-")
-      keyword))
 
-(defn str->symbol [s]
-  (-> s
-      str/lower-case
-      (str/replace #"_" "-")
-      symbol))
 
 (defmulti set-option (fn [o type k v]
                        type))
@@ -354,7 +340,7 @@
                              buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
 
                              args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
-                                          (av/ch-layout->str
+                                          (datafy-media/ch-layout->str
                                            (:ch-layout input-format ))
                                           (:sample-format input-format)
                                           (:sample-rate input-format))
@@ -484,8 +470,6 @@
 (defrecord AVFilterMedia [filter-name opts media-type media]
   fm/IMediaSource
   (-media [this]
-    (fm/-media this media))
-  (-media [this media]
     (mapv (fn [src]
             (let [input-format (fm/-format src)]
               (if (= media-type (:media-type input-format))
@@ -594,7 +578,7 @@
                                buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
 
                                args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
-                                            (av/ch-layout->str
+                                            (datafy-media/ch-layout->str
                                              (:ch-layout input-format ))
                                             (:sample-format input-format)
                                             (:sample-rate input-format))

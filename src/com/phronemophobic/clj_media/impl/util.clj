@@ -1,5 +1,6 @@
 (ns com.phronemophobic.clj-media.impl.util
-  (:require [clojure.data.priority-map :refer [priority-map]]))
+  (:require [clojure.data.priority-map :refer [priority-map]]
+            [clojure.string :as str]))
 
 (defn distinct-by
   "Returns a lazy sequence of the elements of coll with duplicates removed.
@@ -79,6 +80,21 @@
        (let [result (rf result x)]
          (rf (unreduced result))))
       ([result input] (rf result input)))))
+
+(defn normalize-str [s]
+  (let [s (-> s
+              str/lower-case
+              (str/replace #"_" "-"))
+        s (if (re-find #"^[0-9]" s)
+            (str "_" s)
+            s)]
+    s))
+
+(defn str->kw [s]
+  (keyword (normalize-str s)))
+
+(defn str->symbol [s]
+  (symbol (normalize-str s)))
 
 (comment
   (interleave-all-by :i

@@ -1,12 +1,15 @@
 (ns com.phronemophobic.clj-media.impl.video
   (:require [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
+            [com.phronemophobic.clj-media.impl.datafy
+             :as datafy-media]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [clojure.pprint :refer [pprint]])
   (:import
    com.sun.jna.Memory
    com.sun.jna.Pointer
+   java.awt.image.BufferedImage
    com.sun.jna.ptr.PointerByReference
    com.sun.jna.ptr.IntByReference
    com.sun.jna.ptr.ByteByReference
@@ -284,6 +287,14 @@
        (finally
          (.releaseWritableTile img# 0 0)))))
 
+(def ^:private pixel-format->buffered-image-format
+  {(datafy-media/kw->pixel-format :pixel-format/rgb24) BufferedImage/TYPE_3BYTE_BGR
+   (datafy-media/kw->pixel-format :pixel-format/rgb555le) BufferedImage/TYPE_USHORT_555_RGB
+   (datafy-media/kw->pixel-format :pixel-format/rgb565le) BufferedImage/TYPE_USHORT_565_RGB
+   })
+
+
+
 (defn render-frame
   "Writes an AVFrame into a BufferedImage. Assumes :byte-bgr image format."
   [img frame]
@@ -296,12 +307,27 @@
         buf-ptr (-> frame
                     (.readField "data")
                     (nth 0)
-                    (.getPointer))]
+                    (.getPointer))
+
+        get-buf
+        (condp contains? (.getType img)
+          #{BufferedImage/TYPE_3BYTE_BGR} (fn [y] (.getByteArray buf-ptr (* linesize y) linesize))
+          #{BufferedImage/TYPE_USHORT_555_RGB
+            BufferedImage/TYPE_USHORT_565_RGB} (fn [y] (.getShortArray buf-ptr (* linesize y) (/ linesize 2))))]
 
     (with-tile [wraster img]
       (doseq [y (range height)]
         (.setDataElements wraster 0 y width 1
-                          (.getByteArray buf-ptr (* linesize y) linesize))))))
+                          (get-buf y))))))
+
+(defn frame->img [frame]
+  (let [format (pixel-format->buffered-image-format (:format frame))
+        _ (assert format)
+        width (:width frame)
+        height (:height frame)
+        img (BufferedImage. width height format)]
+    (render-frame img frame)
+    img))
 
 
 (defn find-encoder-codec [output-format-context {:keys [width
