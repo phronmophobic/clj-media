@@ -400,11 +400,6 @@
                         encoder-context (av/encoder-context output-format-context output-format)
 
                         stream (av/add-stream output-format-context encoder-context)
-                        stream (if (audio? src)
-                                 (doto stream
-                                   (.writeField "time_base" (:time_base encoder-context)))
-                                 stream)
-
                         stream-index (:index stream)
 
                         output-format
@@ -412,14 +407,13 @@
                           (assoc output-format
                                  :frame-size (:frame_size encoder-context))
                           output-format)]
-                    (when (audio? src)
-                      (let [{:keys [num den]} (:time_base stream)]
-                        (when (or (not= (:sample-rate output-format)
-                                        den)
-                                  (not= 1 num))
-                          (throw (Exception. "Unexpected time base for audio. must be 1/sample-rate.")))))
-
                     (lazy-seq
+                     (when (audio? src)
+                       (let [{:keys [num den]} (:time_base stream)]
+                         (when (or (not= (:sample-rate output-format)
+                                         den)
+                                   (not= 1 num))
+                           (throw (Exception. "Unexpected time base for audio. must be 1/sample-rate.")))))
                      (sequence
                       (comp (insert-last nil)
                             (auto-format2 input-format
@@ -429,13 +423,16 @@
                               identity)
                             (insert-last nil)
                             (av/encode-frame encoder-context)
-                            (map (fn [packet]
-                                   (let [{:keys [duration pts]} packet]
-                                     (.writeField packet "time_base" (:time_base stream))
-                                     (av_packet_rescale_ts packet
-                                                           (:time-base input-format)
-                                                           (:time_base stream)))
-                                   packet))
+                            (if (video? src)
+                              (map (fn [packet]
+                                     (let [{:keys [duration pts]} packet]
+                                       (.writeField packet "time_base" (:time_base stream))
+                                       (av_packet_rescale_ts packet
+                                                               (:time-base input-format)
+                                                               (:time_base stream)))
+                                     packet))
+                              ;; we set the pts via audio-pts already
+                              identity)
                             (map (fn [packet]
                                    (doto packet
                                      (.writeField "stream_index" stream-index)))))
