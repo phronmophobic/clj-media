@@ -26,6 +26,9 @@
          (keys datafy-media/kw->pixel-format))
    :pixel-format/none))
 
+(defn list-codecs []
+  (av/list-codecs))
+
 (defn audio-format [{:keys [ch-layout
                             sample-format
                             sample-rate]
@@ -53,10 +56,29 @@
 
   {:pixel-format pixel-format})
 
+(defn write!
+  "Write media to the path given by `dest`.
 
+  opts can have the following options:
 
-(defn write! [media dest]
-  (fm/write! media dest))
+  `:audio-format`
+  A map with the following keys:
+  `:sample-rate`
+  `:sample-format`
+  `:ch-layout`
+  `:codec` {:id codec-id}
+
+  `:video-format`
+  A map with the following keys.
+  `:pixel-format`
+  `:gop-size`
+  `:codec` {:id codec-id}
+  
+"
+  ([media dest]
+   (write! media dest nil))
+  ([media dest opts]
+   (fm/write! media dest opts)))
 
 (defn filter-video [media]
   (fm/filter-video media))

@@ -312,7 +312,7 @@
                       {:error-code err})))))
 
 (defn video-codec-context-format [codec-context]
-  {:codec-id (:codec_id codec-context)
+  {:codec {:id (:codec_id codec-context)}
    :media-type :media-type/video
    :width (:width codec-context)
    :height (:height codec-context)
@@ -320,7 +320,7 @@
    :gop-size (:gop_size codec-context)})
 
 (defn audio-codec-context-format [codec-context]
-  {:codec-id (:codec_id codec-context)
+  {:codec {:id (:codec_id codec-context)}
    :media-type :media-type/audio
    :sample-format (:sample_fmt codec-context)
    :sample-rate (:sample_rate codec-context)
@@ -370,7 +370,7 @@
         stream))
 
 (defn video-encoder-context [output-format-context format]
-  (let [codec-id (:codec-id format)
+  (let [codec-id (-> format :codec :id)
 
         output-codec (avcodec_find_encoder codec-id)
         _ (when (nil? output-codec)
@@ -414,8 +414,7 @@
     encoder-context))
 
 (defn audio-encoder-context [output-format-context format]
-  (let [codec-id (:codec-id format)
-
+  (let [codec-id (-> format :codec :id)
         output-codec (avcodec_find_encoder codec-id)
         _ (when (nil? output-codec)
             (throw (Exception. "could not find encoder")))

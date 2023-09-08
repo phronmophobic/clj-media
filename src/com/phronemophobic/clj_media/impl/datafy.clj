@@ -396,3 +396,23 @@
           :video-delay (:video_delay params)
           :pixel-format (pixel-format->kw (:format params))})))))
 
+
+(defn map->format
+  ([format media-type]
+   (map->format (assoc format
+                       :media-type media-type)))
+  ([format]
+   (case (:media-type format)
+     :media-type/audio
+     (assoc format
+            :ch-layout
+            (doto (str->ch-layout
+              (:ch-layout format))
+              .read)
+            :sample-format (int (kw->sample-format
+                                 (:sample-format format)))
+            :sample-rate (int (:sample-rate format)))
+
+     :media-type/video
+     (assoc format
+            :pixel-format (int (kw->pixel-format (:pixel-format format)))))))
