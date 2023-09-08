@@ -156,7 +156,11 @@
                          
                           format (merge {:time-base (:time_base stream+)}
                                         (av/codec-context-format decoder-context))
-                         
+
+                          ;; do not share time base
+                          ;; with format.
+                          time-base (let [{:keys [num den]} (:time_base stream+)]
+                                      (av/->avrational num den))
                           frames (sequence
                                   (comp (filter (fn [packet]
                                                   (= (:stream_index packet)
@@ -166,8 +170,7 @@
                                         (map (fn [frame]
                                                (doto frame
                                                  (.writeField "time_base"
-                                                              (:time_base stream+))))))
-                                 
+                                                              time-base)))))
                                   packets)]
                       (->FrameSource frames format)))))
             streams))))
