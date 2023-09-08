@@ -316,7 +316,7 @@
    :media-type :media-type/video
    :width (:width codec-context)
    :height (:height codec-context)
-   :pix-fmt (:pix_fmt codec-context)
+   :pixel-format (:pix_fmt codec-context)
    :gop-size (:gop_size codec-context)})
 
 (defn audio-codec-context-format [codec-context]
@@ -393,7 +393,7 @@
         {:keys [time-base
                 width
                 height
-                pix-fmt]} format
+                pixel-format]} format
 
         gop-size (or (:gop-size format)
                      ;; I asked chat gpt and it said anywhere between 2 and 15 ¯\_(ツ)_/¯
@@ -409,7 +409,7 @@
             (.writeField "height" (int height))
             (.writeField "gop_size" (int gop-size))
             ;; (.writeField "max_b_frames" (int max_b_frames))
-            (.writeField "pix_fmt" pix-fmt)
+            (.writeField "pix_fmt" pixel-format)
             (.writeField "time_base" time-base))]
     encoder-context))
 

@@ -185,7 +185,7 @@
    (keep second)))
 
 (defn auto-format-video [input-format codec]
-  (let [pix-fmt (:pix-fmt input-format)
+  (let [pix-fmt (:pixel-format input-format)
 
         pix_fmts (:pix_fmts codec)
         _ (assert pix_fmts)
@@ -254,10 +254,10 @@
     (audio/resample2 input-format output-format)
     
     :media-type/video
-    (if (= (:pix-fmt input-format)
-           (:pix-fmt output-format))
+    (if (= (:pixel-format input-format)
+           (:pixel-format output-format))
       identity
-      (video/transcode-frame3 input-format (:pix-fmt output-format)))))
+      (video/transcode-frame3 input-format (:pixel-format output-format)))))
 
 (defn default-channel-layout []
   (let [channel-layout (AVChannelLayoutByReference.)
@@ -284,7 +284,7 @@
         (let [codec-id (:video_codec output-format)
               codec (avcodec_find_encoder codec-id)
 
-              pix-fmt (:pix-fmt input-format)
+              pix-fmt (:pixel-format input-format)
 
               pix_fmts (:pix_fmts codec)
               _ (assert pix_fmts)
@@ -294,7 +294,7 @@
               pix-fmt (first pix-fmts)
               output-format (merge
                              input-format
-                             {:pix-fmt pix-fmt
+                             {:pixel-format pix-fmt
                               :codec-id codec-id})]
           output-format)
 
@@ -544,7 +544,7 @@
                                  (video/transcode-frame3
                                   input-format
                                   (datafy-media/kw->pixel-format
-                                   (:pix-fmt video-format))))
+                                   (:pixel-format video-format))))
                                 identity))]
       (transduce
        formatter

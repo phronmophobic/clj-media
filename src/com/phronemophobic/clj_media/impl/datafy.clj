@@ -394,5 +394,5 @@
          {:width (:width params)
           :height (:height params)
           :video-delay (:video_delay params)
-          :pix-fmt (pixel-format->kw (:format params))})))))
+          :pixel-format (pixel-format->kw (:format params))})))))
 

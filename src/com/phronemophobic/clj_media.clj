@@ -42,16 +42,16 @@
     :sample-format sample-format
     :sample-rate sample-rate}))
 
-(defn video-format [{:keys [pix-fmt]
+(defn video-format [{:keys [pixel-format]
                      :as format}]
-  (when (not pix-fmt)
+  (when (not pixel-format)
     (throw (ex-info "Cannot create video format without specifying pix format."
                     {})))
-  (when (not (contains? pixel-formats pix-fmt))
+  (when (not (contains? pixel-formats pixel-format))
     (throw (ex-info "Invalid pixel format."
                     {:format format})))
 
-  {:pix-fmt pix-fmt})
+  {:pixel-format pixel-format})
 
 
 

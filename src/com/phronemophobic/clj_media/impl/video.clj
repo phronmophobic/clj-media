@@ -109,7 +109,7 @@
                          :type :transcode-error}))))))))
   )
 
-(defn transcode-frame3 [{:keys [width height pix-fmt time-base]}
+(defn transcode-frame3 [{:keys [width height pixel-format time-base]}
                         output-pix-fmt]
   (fn [rf]
     (let [frame (av_frame_alloc)
@@ -123,7 +123,7 @@
           args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
                        width
                        height
-                       pix-fmt
+                       pixel-format
                        ;; 1
                        ;; 60
                        (.readField time-base "num")
@@ -432,10 +432,10 @@
                    SWS_BILINEAR)
          sws-ctx (sws_getContext (:width input-format)
                                  (:height input-format)
-                                 (:pix-fmt input-format)
+                                 (:pixel-format input-format)
                                  (:width output-format)
                                  (:height output-format)
-                                 (:pix-fmt output-format)
+                                 (:pixel-format output-format)
                                  flags
                                  nil
                                  nil

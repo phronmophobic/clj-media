@@ -201,7 +201,7 @@
                                args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
                                             (:width input-format)
                                             (:height input-format)
-                                            (:pix-fmt input-format)
+                                            (:pixel-format input-format)
                                             (:num time-base)
                                             (:den time-base))
 
@@ -225,7 +225,7 @@
           buffersink-context (.getValue buffersink-context*)
 
           pix-fmts (doto (IntByReference.)
-                     (.setValue (:pix-fmt (first input-formats))))
+                     (.setValue (:pixel-format (first input-formats))))
           _ (av_opt_set_bin buffersink-context "pix_fmts"
                             pix-fmts
                             (* 1 4)
@@ -496,7 +496,7 @@
                         (assoc input-format
                                :width (:width first-frame)
                                :height (:height first-frame)
-                               :pix-fmt (:format first-frame)))]
+                               :pixel-format (:format first-frame)))]
                   (fm/->FrameSource
                    frames
                    output-format))
@@ -557,7 +557,7 @@
             (assoc (first filter-input-formats)
                    :width (:width first-frame)
                    :height (:height first-frame)
-                   :pix-fmt (:format first-frame)))
+                   :pixel-format (:format first-frame)))
           filtered-output (fm/->FrameSource frames
                                             output-format)]
       (conj unfiltered-outputs filtered-output))))
@@ -597,7 +597,7 @@
                                args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
                                             (:width input-format)
                                             (:height input-format)
-                                            (:pix-fmt input-format)
+                                            (:pixel-format input-format)
                                             (:num time-base)
                                             (:den time-base))
 
@@ -648,7 +648,7 @@
                                buffersink-context (.getValue buffersink-context*)
 
                                pix-fmts (doto (IntByReference.)
-                                          (.setValue (:pix-fmt input-format)))
+                                          (.setValue (:pixel-format input-format)))
                                _ (av_opt_set_bin buffersink-context "pix_fmts"
                                                  pix-fmts
                                                  (* 1 4)
@@ -881,7 +881,7 @@
                                (assoc input-format
                                       :width (:width first-frame)
                                       :height (:height first-frame)
-                                      :pix-fmt (:format first-frame)))]
+                                      :pixel-format (:format first-frame)))]
                          (fm/->FrameSource frames
                                            output-format))))
                 (range stream-count))]
