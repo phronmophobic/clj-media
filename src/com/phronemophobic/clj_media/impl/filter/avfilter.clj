@@ -84,8 +84,20 @@
   [o _ k v]
   (let [[w h] v]
    (av_opt_set_image_size o k w h AV_OPT_SEARCH_CHILDREN)))
-#_(defmethod set-option :avoption-type/video-rate
-  [o _ k v])
+(defmethod set-option :avoption-type/video-rate
+  [o _ k v]
+  (let [ratio
+        (cond
+          (ratio? v) (av/->avrational (numerator v) (denominator v))
+          (integer? v) (av/->avrational 1 v)
+          (and (seqable? v)
+               (= 2 (count v))) (av/->avrational (first v) (second v))
+          :else (throw
+                 (ex-info "Could not set video rate"
+                          {:o o
+                           :k k
+                           :v v})))]
+   (av_opt_set_video_rate o k ratio AV_OPT_SEARCH_CHILDREN)))
 (defmethod set-option :avoption-type/string
   [o _ k v]
   (av_opt_set o k v AV_OPT_SEARCH_CHILDREN))
