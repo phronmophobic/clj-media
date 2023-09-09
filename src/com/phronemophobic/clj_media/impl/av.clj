@@ -410,7 +410,11 @@
             (.writeField "gop_size" (int gop-size))
             ;; (.writeField "max_b_frames" (int max_b_frames))
             (.writeField "pix_fmt" pixel-format)
-            (.writeField "time_base" time-base))]
+            (.writeField "time_base" time-base))
+
+        _ (when-let [bit-rate (:bit-rate format)]
+            (doto encoder-context
+              (.writeField "bit_rate" bit-rate)))]
     encoder-context))
 
 (defn audio-encoder-context [output-format-context format]
