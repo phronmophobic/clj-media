@@ -112,9 +112,7 @@
 (defn transcode-frame3 [{:keys [width height pixel-format time-base]}
                         output-pix-fmt]
   (fn [rf]
-    (let [frame (av_frame_alloc)
-
-          filter-graph (avfilter_graph_alloc)
+    (let [filter-graph (avfilter_graph_alloc)
 
           buffer (avfilter_get_by_name "buffer")
           _ (when (nil? buffer)
@@ -163,8 +161,6 @@
         ([]
          (rf))
         ([result]
-         (av_frame_free (doto (PointerByReference.)
-                          (.setValue (.getPointer frame))))
          (avfilter_graph_free
           (doto (PointerByReference.)
             (.setValue (.getPointer filter-graph))))
@@ -173,7 +169,8 @@
          (av_buffersrc_add_frame buffer-context
                                  input-frame)
          (loop [result result]
-           (let [err (av_buffersink_get_frame_flags buffersink-context
+           (let [frame (av/new-frame)
+                 err (av_buffersink_get_frame_flags buffersink-context
                                                     frame
                                                     0)]
              (cond
