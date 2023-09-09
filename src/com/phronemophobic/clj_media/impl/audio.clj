@@ -734,33 +734,51 @@
                                    (.setValue (Pointer. resample-ctx-ptr))) )))
 
         bytes-per-sample (av_get_bytes_per_sample (:sample-format output-format))
+        num-output-channels (-> output-format
+                                :ch-layout
+                                :nb_channels)
+        sample-offset-multiplier
+        (if (= 1 (av_sample_fmt_is_planar (:sample-format output-format)))
+          bytes-per-sample
+          (* bytes-per-sample num-output-channels))
+
+        _ (assert (pos? bytes-per-sample))
         ;; should maybe check for AV_CODEC_CAP_VARIABLE_FRAME_SIZE?
         output-frame-size (or (:frame-size output-format)
                               (int 1024))
 
-        ;; shouldn't be reusing frames here.
-        output-frame (doto (av_frame_alloc)
-                       (.writeField "nb_samples" output-frame-size)
-                       ;; set below
-                       ;; (.writeField "ch_layout" (:ch-layout output-format))
-                       (.writeField "format" (:sample-format output-format))
-                       (.writeField "sample_rate" (:sample-rate output-format)))
+        new-output-frame
+        (let [{:keys [ch-layout
+                      sample-format
+                      sample-rate]}
+              output-format]
+          (fn []
+            (let [frame
+                  (doto (av/new-frame)
+                    ;; set to output-frame size
+                    ;; for av_frame_get_buffer
+                    (.writeField "nb_samples" output-frame-size)
+                    (.writeField "format" sample-format)
+                    (.writeField "sample_rate" sample-rate))]
+              (assert
+               (zero? (av_channel_layout_copy
+                       (.getPointer (:ch_layout frame))
+                       (.getPointer ch-layout))))
+              (assert
+               (>= (av_frame_get_buffer frame 0)
+                   0))
+              ;; set back to zero now that we've
+              ;; alloced the frame's buffer
+              ;; we'll be using nb_samples to keep
+              ;; track of how many samples we've collected
+              ;; as we go.
+              (.writeField frame "nb_samples" (int 0))
 
-        _ (assert
-           (zero? (av_channel_layout_copy
-                   (.getPointer (:ch_layout output-frame))
-                   (.getPointer (:ch-layout output-format)))))
+              frame)))
 
-        err (av_frame_get_buffer output-frame 0)
-        _ (when (neg? err)
-            (throw (Exception. "Could not alloc resample output frame.")))
-
-        ptr (Pointer/nativeValue (.getPointer output-frame))]
-    (.register av/cleaner output-frame
-               (fn []
-                 (av_frame_free
-                  (doto (PointerByReference.)
-                    (.setValue (Pointer. ptr))))))
+        output-frame* (volatile!
+                       (new-output-frame))]
+    (assert (<= num-output-channels (alength (:data (AVFrame.)))))
     (fn [rf]
       (fn
         ([] (rf))
@@ -768,15 +786,21 @@
          (rf result))
         ([result input-frame]
          (if input-frame
-           (let [num-samples (:nb_samples input-frame)
-
+           (let [output-frame @output-frame*
+                 num-samples (:nb_samples input-frame)
                  current-samples (:nb_samples output-frame)
                  samples-wanted (- output-frame-size
                                    current-samples)
-                 data-ptr (.share (-> (:data output-frame)
-                                      (nth 0)
-                                      (.getPointer))
-                                  (* bytes-per-sample current-samples))
+
+                 data-ptr (into-array Pointer
+                                      (eduction
+                                       (map (fn [p]
+                                              (when p
+                                                (.share (.getPointer p)
+                                                        (* sample-offset-multiplier
+                                                           current-samples)))))
+                                       (:data output-frame)))
+
                  err (swr_convert resample-ctx
                                   data-ptr samples-wanted
                                   (:extended_data input-frame) num-samples)]
@@ -785,39 +809,54 @@
                (throw (Exception. "Error resampling.")))
 
              (if (pos? err)
-               (do
-                 (let [old-nb-samples (.readField output-frame "nb_samples")
-                       total-samples (+ err old-nb-samples)]
-                   (.writeField output-frame "nb_samples" total-samples)
-                   (if (= total-samples output-frame-size)
-                     (let [result (rf result output-frame)]
-                       (.writeField output-frame "nb_samples" 0)
-                       result)
-                     ;; not enough samples yet
-                     result)))
+               (let [total-samples (+ err current-samples)]
+                 (.writeField output-frame "nb_samples" (int total-samples))
+                 (if (= total-samples output-frame-size)
+                   (do
+                     (vreset! output-frame* (new-output-frame))
+                     (rf result output-frame))
+                   ;; not enough samples yet
+                   result))
                ;; else
                result))
-           ;; else flush
-           (let [result
-                 (loop [result result]
-                   (let [err (swr_convert resample-ctx
-                                          (:data output-frame) output-frame-size
-                                          nil 0)]
-                     (cond
+           ;; else no input frame, flush
+           (loop [result result]
+             (let [output-frame @output-frame*
+                   current-samples (:nb_samples output-frame)
+                   samples-wanted (- output-frame-size
+                                     current-samples)
 
-                       (neg? err)
-                       (throw (Exception. "Error flushing audio resampler."))
+                   data-ptr (into-array Pointer
+                                        (eduction
+                                         (map (fn [p]
+                                                (when p
+                                                  (.share (.getPointer p)
+                                                          (* sample-offset-multiplier
+                                                             current-samples)))))
+                                         (:data output-frame)))
 
-                       (zero? err) result
+                   err (swr_convert resample-ctx
+                                    data-ptr output-frame-size
+                                    nil 0)]
+               (cond
 
-                       (pos? err)
-                       (let [_ (.writeField output-frame "nb_samples" err)
-                             result (rf result output-frame)]
+                 (neg? err)
+                 (throw (Exception. "Error flushing audio resampler."))
+
+                 (zero? err) result
+
+                 (pos? err)
+                 (let [total-samples (+ err current-samples)]
+                   (.writeField output-frame "nb_samples" (int total-samples))
+                   (if (= total-samples output-frame-size)
+                     (do
+                       (vreset! output-frame* (new-output-frame))
+                       (let [result (rf result output-frame)]
                          (if (reduced? result)
                            result
-                           (recur result))))))]
-             result)))))))
-
+                           (recur result))))
+                     ;; send last frame
+                     (rf result output-frame))))))))))))
 
 (defn -main [& args]
   (run))
