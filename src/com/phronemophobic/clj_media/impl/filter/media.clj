@@ -7,6 +7,8 @@
             [clojure.core.protocols :as p]
             [com.phronemophobic.clj-media.impl.datafy
              :as datafy-media]
+            [com.phronemophobic.clj-media.impl.model
+             :as impl.model]
             [com.phronemophobic.clj-media.impl.av :as av]
             [com.phronemophobic.clj-media.impl.audio :as audio]
             [com.phronemophobic.clj-media.impl.video :as video]
@@ -566,9 +568,14 @@
                                   input-format
                                   (datafy-media/kw->pixel-format
                                    (:pixel-format video-format))))
-                                identity))]
+                                identity))
+          ->frame
+          (case (:media-type input-format)
+            :media-type/audio impl.model/->AudioFrame
+            :media-type/video impl.model/->VideoFrame)]
       (transduce
-       formatter
+       (comp formatter
+             (map ->frame))
        (completing f)
        init
        (-frames stream)))))
