@@ -26,6 +26,7 @@
     (String. (.getByteArray buf 0 err) "ascii")))
 
 (defn str->ch-layout [s]
+  (assert s "Invalid ch-layout.")
   (let [ch-layout (AVChannelLayoutByReference.)
         err (av_channel_layout_from_string ch-layout s)]
     (when (neg? err)
