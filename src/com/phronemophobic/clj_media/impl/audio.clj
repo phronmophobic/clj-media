@@ -858,6 +858,17 @@
                      ;; send last frame
                      (rf result output-frame))))))))))))
 
+(defn frame->buf [frame]
+  (assert
+   (not= 1 (av_sample_fmt_is_planar (:format frame)))
+   "Getting buffer data from planar frames not supported.")
+  (let [buf-size (first (:linesize frame))
+        buf (-> (:data frame)
+                (nth 0)
+                (.getPointer)
+                (.getByteBuffer 0 buf-size))]
+    buf))
+
 (defn -main [& args]
   (run))
 

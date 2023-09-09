@@ -458,3 +458,10 @@
             ;; else nothing to do
             result)))))))
 
+(defn frame->buf [frame]
+  (let [buf-size (first (:linesize frame))
+        buf (.getByteBuffer (:extended_data frame)
+                            0
+                            buf-size)]
+    buf))
+
