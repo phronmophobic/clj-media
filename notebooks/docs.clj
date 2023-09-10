@@ -7,14 +7,7 @@
             [com.phronemophobic.clj-media :as clj-media]
             [com.phronemophobic.clj-media.avfilter :as avfilter]
             [com.phronemophobic.clj-media.model :as mm]
-            [clojure.string :as str]
-
-
-            [com.phronemophobic.clj-media.impl.filter.media :as fm]
-            [com.phronemophobic.clj-media.impl.model :as im]
-            [com.phronemophobic.clj-media.impl.av :as av]
-            )
-  (:import javax.imageio.ImageIO))
+            [clojure.string :as str]))
 
 {:nextjournal.clerk/visibility {:code :hide :result :hide}}
 
@@ -310,8 +303,6 @@ encoded --> output.mp4
      :video
      {:format (clj-media/video-format
                {:pixel-format :pixel-format/rgb565le})}))))
-#_(with-open [os (clojure.java.io/output-stream "frame.png")]
-  (ImageIO/write img "png" os))
 
 ;; ## Cropping Videos
 (write! (->> (clj-media/file "media/birds.mp4")
