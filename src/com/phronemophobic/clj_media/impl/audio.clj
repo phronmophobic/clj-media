@@ -748,10 +748,13 @@
                               (int 1024))
 
         new-output-frame
-        (let [{:keys [ch-layout
-                      sample-format
+        (let [{:keys [sample-format
                       sample-rate]}
-              output-format]
+              output-format
+              ch-layout (AVChannelLayout.)]
+          ;; create out own copy since original copy may change :(
+          (av_channel_layout_copy (.getPointer ch-layout)
+                                  (.getPointer (:ch-layout output-format)))
           (fn []
             (let [frame
                   (doto (av/new-frame)
