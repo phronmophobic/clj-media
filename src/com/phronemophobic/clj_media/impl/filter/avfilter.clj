@@ -974,11 +974,26 @@
                                        (map :name)
                                        (map #(str "\"" % "\""))
                                        const)))]
-                               [(str "type: " (clojure.core/name type))
-                                (when (not (map? default-val))
-                                  (str "default: " default-val))
-                                (str "min: " min)
-                                (str "max: " max)]))))))
+                               (case type
+                                 :avoption-type/duration
+                                 [(str "type: duration in microseconds" )
+                                  (when (not (map? default-val))
+                                    (str "default: " default-val))
+                                  (str "min: " min)
+                                  (str "max: " max)]
+
+                                 :avoption-type/bool
+                                 [(str "type: " (clojure.core/name type))
+                                  (when (not (map? default-val))
+                                    (str "default: " default-val))
+                                  "values: true, false"]
+
+                                 ;; else
+                                 [(str "type: " (clojure.core/name type))
+                                  (when (not (map? default-val))
+                                    (str "default: " default-val))
+                                  (str "min: " min)
+                                  (str "max: " max)])))))))
                (sort-by :name supported-options)))
 
              "\n\n"
