@@ -311,11 +311,22 @@
         _ (when (nil? format-ctx)
             (throw (ex-info "Error allocating format context."
                             {:filename fname})))
+
         format-ctx* (doto (PointerByReference.)
                       (.setValue (.getPointer format-ctx)))
+        _ (.register cleaner format-ctx
+                     (fn []
+                       (avformat_free_context (.getValue format-ctx*))))
         err (avformat_open_input format-ctx* fname nil nil)]
+
     (if (zero? err)
-      format-ctx
+      (do
+        (.register cleaner format-ctx
+                     (fn []
+                       (avformat_close_input
+                        ;; hold explicit reference to format-ctx
+                        (PointerByReference. format-ctx))))
+        format-ctx)
       (throw (ex-info "Error opening format context"
                       {:error-code err})))))
 
