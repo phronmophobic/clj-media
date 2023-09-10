@@ -100,9 +100,13 @@
         ptr (Pointer/nativeValue (.getPointer frame))]
     (.register cleaner frame
                (fn []
-                 (av_frame_free
-                  (doto (PointerByReference.)
-                    (.setValue (Pointer. ptr))))))
+                 (let [pointer (Pointer. ptr)]
+                   ;; av_frame_free also calls unref
+                   ;; but this is what the examples do
+                   (av_frame_unref pointer)
+                   (av_frame_free
+                    (doto (PointerByReference.)
+                      (.setValue pointer))))))
     frame))
 
 (defn new-packet[]
@@ -110,9 +114,13 @@
         ptr (Pointer/nativeValue (.getPointer packet))]
     (.register cleaner packet
                (fn []
-                 (av_packet_free
+                 (let [pointer (Pointer. ptr)]
+                   ;; av_frame_free also calls unref
+                   ;; but this is what the examples do
+                   (av_packet_unref pointer)
+                   (av_packet_free
                     (doto (PointerByReference.)
-                      (.setValue (Pointer. ptr))))))
+                      (.setValue pointer))))))
     packet))
 
 ;; shouldn't be a transducer
