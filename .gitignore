@@ -32,4 +32,6 @@
 /*.flac
 /*.aac
 /tmp
+/.clerk
+/docs
 hs_err_pid*.log
