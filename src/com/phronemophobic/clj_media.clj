@@ -35,7 +35,7 @@
 
 (defn audio-format
   "Convenience function for returning an audio format."
-  [{:keys [ch-layout
+  [{:keys [channel-layout
            sample-format
            sample-rate]
     :as format}]
@@ -46,10 +46,9 @@
     (throw (ex-info "Invalid sample format."
                     {:format format})))
 
-  (merge
-   {:ch-layout "stereo"
-    :sample-format sample-format
-    :sample-rate sample-rate}))
+  {:channel-layout channel-layout
+   :sample-format sample-format
+   :sample-rate sample-rate})
 
 (defn video-format
   "Convenience function for returning an audio format."

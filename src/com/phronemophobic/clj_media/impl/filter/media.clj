@@ -546,7 +546,7 @@
                   )
               "union.mp4")))
 
-(deftype FramesReducible [media stream audio-format video-format]
+(deftype FramesReducible [media stream output-format]
   clojure.lang.IReduceInit
   (reduce [_ f init]
     (let [stream
@@ -562,20 +562,20 @@
           input-format (-format stream)
           formatter
           (case (:media-type input-format)
-            :media-type/audio (if audio-format
+            :media-type/audio (if output-format
                                 (comp
                                  (insert-last nil)
                                  (audio/resample2 input-format
-                                                  (datafy-media/map->format input-format
+                                                  (datafy-media/map->format output-format
                                                                             :media-type/audio)))
                                 identity)
-            :media-type/video (if video-format
+            :media-type/video (if output-format
                                 (comp
                                  (insert-last nil)
                                  (video/transcode-frame3
                                   input-format
                                   (datafy-media/kw->pixel-format
-                                   (:pixel-format video-format))))
+                                   (:pixel-format output-format))))
                                 identity))
           ->frame
           (case (:media-type input-format)
@@ -591,10 +591,8 @@
 (defn frames-reducible
   ([media stream]
    (frames-reducible media stream nil))
-  ([media stream {:keys [audio-format
-                         video-format]
+  ([media stream {:keys [format]
                   :as opts}]
    (->FramesReducible media
                       stream
-                      audio-format
-                      video-format)))
+                      format)))
