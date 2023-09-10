@@ -45,10 +45,11 @@
   (when (not (contains? sample-formats sample-format))
     (throw (ex-info "Invalid sample format."
                     {:format format})))
-
-  {:channel-layout channel-layout
-   :sample-format sample-format
-   :sample-rate sample-rate})
+  (merge
+   format
+   {:channel-layout channel-layout
+    :sample-format sample-format
+    :sample-rate sample-rate}))
 
 (defn video-format
   "Convenience function for returning an audio format."
@@ -61,7 +62,9 @@
     (throw (ex-info "Invalid pixel format."
                     {:format format})))
 
-  {:pixel-format pixel-format})
+  (merge
+   format
+   {:pixel-format pixel-format}))
 
 (defn write!
   "Write media to the path given by `dest`.
