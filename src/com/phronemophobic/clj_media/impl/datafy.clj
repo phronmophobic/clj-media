@@ -408,7 +408,7 @@
      (assoc format
             :ch-layout
             (doto (str->ch-layout
-              (:ch-layout format))
+                   (:channel-layout format))
               .read)
             :sample-format (int (kw->sample-format
                                  (:sample-format format)))

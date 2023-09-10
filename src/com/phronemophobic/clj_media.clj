@@ -15,24 +15,30 @@
 
 
 (def sample-formats
+  "All possible sample formats."
   (disj
    (into #{}
          (keys datafy-media/kw->sample-format))
    :sample-format/none))
 
 (def pixel-formats
+  "All possibel pixel formats."
   (disj
    (into #{}
          (keys datafy-media/kw->pixel-format))
    :pixel-format/none))
 
-(defn list-codecs []
+(defn list-codecs
+  "Returns a collection of available codecs."
+  []
   (av/list-codecs))
 
-(defn audio-format [{:keys [ch-layout
-                            sample-format
-                            sample-rate]
-                     :as format}]
+(defn audio-format
+  "Convenience function for returning an audio format."
+  [{:keys [ch-layout
+           sample-format
+           sample-rate]
+    :as format}]
   (when (not sample-format)
     (throw (ex-info "Cannot create audio format without specifying sample format."
                     {})))
@@ -45,8 +51,10 @@
     :sample-format sample-format
     :sample-rate sample-rate}))
 
-(defn video-format [{:keys [pixel-format]
-                     :as format}]
+(defn video-format
+  "Convenience function for returning an audio format."
+  [{:keys [pixel-format]
+    :as format}]
   (when (not pixel-format)
     (throw (ex-info "Cannot create video format without specifying pix format."
                     {})))
@@ -63,53 +71,46 @@
 
   `:audio-format`
   A map with the following keys:
-  `:sample-rate`
-  `:sample-format`
-  `:ch-layout`
+  `:sample-rate`: See `:sample-rates` found in `list-codecs`.
+  `:sample-format`: See `:sample-formats` found in `list-codecs`.
+  `:channel-layout`: See `:name` of `:channel-layouts` found in `list-codecs`.
+                \"stereo\" and \"mono\" are typical values.
   `:codec` {:id codec-id}
 
   `:video-format`
   A map with the following keys.
-  `:pixel-format`
-  `:gop-size`
-  `:codec` {:id codec-id}
-  
-"
+  `:pixel-format`: See `:pixel-formats` found in `list-codecs`.
+  `:gop-size`: [optional] the number of pictures in a group of pictures, or 0 for intra_only.
+  `:codec`: A codec in the form, `{:id codec-id}`. See `list-codecs`.
+  "
   ([media dest]
    (write! media dest nil))
   ([media dest opts]
    (fm/write! media dest opts)))
 
-(defn filter-video [media]
+(defn filter-video
+  "Returns media with only video streams from `media`."
+  [media]
   (fm/filter-video media))
 
-(defn remove-video [media]
+(defn remove-video
+  "Returns media without video streams from `media`."
+  [media]
   (fm/filter-audio media))
 
-(defn filter-audio [media]
+(defn filter-audio
+  "Returns media with only audio streams from `media`."
+  [media]
   (fm/filter-audio media))
 
-(defn remove-audio [media]
+(defn remove-audio
+  "Returns media without audio streams from `media`."
+  [media]
   (fm/filter-video media))
 
-(defn has-video? [media])
-
-(defn has-audio? [media])
-
-(defn silent-audio
-  "Returns silent audio media in format."
-  [format])
-
-(defn java-graphics-media
-  
-  [f ])
-
-(defn byte-buffer-media
-  "Returns media with format and frames."
-  [format frames]
-  )
-
-(defn union [& medias]
+(defn union
+  "Returns media that combines all the streams from `medias`."
+  [& medias]
   (apply fm/union medias))
 
 (defn file
@@ -154,9 +155,6 @@
                                         {:ch-layout "stereo"
                                          :sample-rate 44100
                                          :sample-format :sample-format/s16})})))
-
-(defn frame->img [frame]
-  (video/frame->img frame))
 
 (comment
   (av/probe "my-video.mp4")

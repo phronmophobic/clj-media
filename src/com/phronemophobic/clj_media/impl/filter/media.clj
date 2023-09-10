@@ -379,19 +379,27 @@
                         (cond
                           (and (audio? src)
                                (:audio-format opts))
-                          (merge
-                           (select-keys input-format
-                                        [:time-base])
-                           (datafy-media/map->format (:audio-format opts)
-                                                     :media-type/audio))
+                          (let [{:keys [audio-format]} opts]
+                            (assert (:channel-layout audio-format) "Audio format must have `:channel-layout.`")
+                            (assert (:sample-format audio-format) "Audio format must have `:sample-audio-format.`")
+                            (assert (:sample-rate audio-format) "Audio format must have `:sample-rate`.")
+                            (assert (:id (:codec audio-format)) "Audio format must have `{:codec {:id codec-id}}`.")
+                            (merge
+                             (select-keys input-format
+                                          [:time-base])
+                             (datafy-media/map->format audio-format
+                                                       :media-type/audio)))
 
                           (and (video? src)
                                (:video-format opts))
-                          (merge
-                           (select-keys input-format
-                                        [:width :height :time-base])
-                           (datafy-media/map->format (:video-format opts)
-                                                     :media-type/video))
+                          (let [video-format (:video-format opts)]
+                            (assert (:pixel-format video-format) "Video format must have `:pixel-format`.")
+                            (assert (:id (:codec video-format)) "Video format must have `{:codec {:id codec-id}}`.")
+                            (merge
+                             (select-keys input-format
+                                          [:width :height :time-base])
+                             (datafy-media/map->format video-format
+                                                       :media-type/video)))
 
                           :else
                           (pick-output-format
