@@ -31,4 +31,5 @@
 /*.ogg
 /*.flac
 /*.aac
+/tmp
 hs_err_pid*.log
