@@ -7,7 +7,6 @@
             [clojure.datafy :as d]
             [com.phronemophobic.clj-media.impl.datafy
              :as datafy-media]
-            [net.cgrand.xforms :as x]
             [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
             [com.phronemophobic.clj-media.impl.audio :as audio]
