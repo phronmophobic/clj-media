@@ -148,7 +148,9 @@
   ([media stream opts]
    (fm/frames-reducible media stream opts)))
 
-(defn play-audio [media]
+(defn play-audio
+  "Plays the first audio stream in `media`."
+  [media]
   (transduce
    (audio/frame->buf raw/AV_SAMPLE_FMT_S16)
    (audio/play-sound)
