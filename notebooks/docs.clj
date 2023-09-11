@@ -322,6 +322,7 @@ encoded --> output.mp4
 ;; ## Convert A Specific Portion Of A Video
 (write! (let [media (clj-media/file "media/birds.mp4")
               portion (->> media
+                           (clj-media/filter-video )
                            (avfilter/crop {:w "iw*0.5"})
                            (avfilter/edgedetect))]
           (avfilter/overlay {:x "main_w/2 - overlay_w/2"}
