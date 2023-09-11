@@ -3,7 +3,8 @@
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
             [clojure.datafy :as d]
-            com.phronemophobic.clj-media.impl.datafy
+            [com.phronemophobic.clj-media.impl.datafy
+             :as datafy-media]
             [clojure.edn :as edn]
             [com.phronemophobic.clong.gen.jna :as gen]
             [com.phronemophobic.clj-media.impl.raw :as raw
@@ -624,3 +625,100 @@
               streams)]
     (avformat_close_input (PointerByReference. (.getPointer format-context)))
     {:streams streams-info}))
+
+
+(defn make-frame [{:keys [bytes
+                          format
+                          time-base
+                          key-frame?
+                          pts]
+                   :as m}]
+  (let [frame (new-frame)]
+    (if time-base
+      (doto frame
+       (.writeField "time_base"
+                    (datafy-media/clj->avrational time-base)))
+      ;; else
+      (throw (ex-info "Time base required when creating frames."
+                      {:frame m})))
+
+    (if pts
+      (doto frame
+        (.writeField "pts" (long pts)))
+      ;; else
+      (throw (ex-info "pts required when creating frames."
+                      {:frame m})))
+
+    (when key-frame?
+      (doto frame
+        (.writeField "key_frame" (case key-frame?
+                                   (1 true) (int 1)
+                                   ;; else
+                                   (int 0)))))
+
+    (if bytes
+      (case (:media-type format)
+        :media-type/audio
+        (let [{:keys [ch-layout
+                      sample-format
+                      sample-rate]} (datafy-media/map->format format)
+
+              bytes-per-sample (raw/av_get_bytes_per_sample sample-format)
+              num-output-channels (-> ch-layout
+                                      :nb_channels)
+              ;; calculation assumes non-planar format
+              num-samples
+              (Long/divideUnsigned
+               (alength bytes)
+               (* bytes-per-sample num-output-channels))]
+
+          (when (= 1 (raw/av_sample_fmt_is_planar sample-format))
+            (throw (ex-info "Cannot create planar audio frames."
+                            {:frame m})))
+
+          (doto frame
+            (.writeField "nb_samples" (int num-samples))
+            (.writeField "format" sample-format)
+            (.writeField "sample_rate" sample-rate))
+          (assert
+           (zero? (raw/av_channel_layout_copy
+                   (.getPointer (:ch_layout frame))
+                   (.getPointer ch-layout))))
+          (assert
+           (>= (raw/av_frame_get_buffer frame 0)
+               0))
+          (when (not= (aget (:linesize frame) 0)
+                      (alength bytes))
+            (throw (ex-info "Bytes are the wrong length for sample format."
+                            {:frame m
+                             :bytes bytes
+                             :expected-length (aget (:linesize frame) 0)})))
+          (.write (.getPointer (aget (:data frame) 0)) 0 bytes 0 (alength bytes)))
+
+        :media-type/video
+        (let [{:keys [pixel-format
+                      width
+                      height]} (datafy-media/map->format format)]
+          (doto frame
+            (.writeField "width" (int width))
+            (.writeField "height" (int height))
+            (.writeField "format" pixel-format))
+          (when-let [line-size (:line-size format)]
+            (doto frame
+              (.writeField "linesize"
+                           (doto (int-array 8)
+                             (aset 0 line-size)))))
+          (assert
+           (>= (raw/av_frame_get_buffer frame 0)
+               0))
+
+          (.write (.getPointer (aget (:data frame) 0)) 0 bytes 0 (alength bytes)))
+
+        nil (throw (ex-info "frame requires `:media-type` to be set."
+                            {:frame m})))
+
+      ;; else, no bytes
+      (throw (ex-info "bytes required when creating frames."
+                      {:frame m})))
+
+    frame))

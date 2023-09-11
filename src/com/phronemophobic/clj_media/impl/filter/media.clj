@@ -76,42 +76,6 @@
                           (-format src))
            src))))
 
-(defrecord AdjustVolume [volumef media]
-  IMediaSource
-  (-media [this]
-    (into []
-          (map-audio ff/adjust-volume)
-          media)))
-
-(defn adjust-volume
-  ([volumef]
-   (->AdjustVolume volumef nil))
-  ([volumef media]
-   (->AdjustVolume volumef media)))
-
-
-(defrecord Scale [sx sy media]
-  IMediaSource
-  (-media [this]
-    (mapv (fn [src]
-            (let [input-format (-format src)
-
-                  ]
-              (case (:media-type input-format)
-                :media-type/audio src
-
-                :media-type/video
-                (let [output-format (-> input-format
-                                        (update :width (fn [w]
-                                                         (int (* w sx))))
-                                        (update :height (fn [h]
-                                                          (int (* h sy)))))]
-                  (->FrameSource
-                   (sequence
-                    (video/swscale input-format output-format)
-                    (-frames src))
-                   output-format)))))
-     (-media media))))
 
 (defrecord MediaFile [fname]
   IMediaSource
@@ -507,44 +471,20 @@
 (defn union [& medias]
   (->Union medias))
 
+
+(defrecord MediaFrames [format frames]
+  IMediaSource
+  (-media [this]
+    [(->FrameSource
+      frames
+      (datafy-media/map->format format))]))
+
+(defn media-frames [format frames]
+  (->MediaFrames format
+                 frames))
+
 (defn ^:private ->url-str [fname]
   (str "file://" (.getCanonicalPath (io/file fname))))
-
-(defn -main [& args]
-  (let [outname (or (first args)
-                    "test.mov")
-        default-input (->url-str "/Users/adrian/workspace/eddie/vids/guitar_notes.mp4")
-        [inname outname]
-        (case (count args)
-          0 [default-input
-             "test.mp4"]
-          1 [default-input
-             (first args)]
-
-          ;; else
-          [(str "file://" (.getCanonicalPath (io/file (first args))))
-           (second args)]
-          )]
-    (write! (-> (->MediaFile
-                 ;;"file:///Users/adrian/workspace/apple-data/iCloud Photos Part 1 of 3/Photos/IMG_0454.mp4"
-                 inname
-                 #_"file:///Users/adrian/workspace/blog/blog/resources/public/mairio/videos/mairio-level-5-3.mp4"
-                 )
-                ;; (filter-video)
-                ;; (filter-audio)
-                (->> (->Scale 0.25 0.5))
-                )
-            outname)
-
-    #_(write! (-> (->Union
-                   (->MediaFile
-                    (->url-str "./examples/codetogif/this-is-fine-but-with-earthquakes.gif"))
-                   (->MediaFile
-                    (->url-str "./examples/avencode/bar.mp3")))
-                  ;; (filter-video)
-                  ;; (filter-audio)
-                  )
-              "union.mp4")))
 
 (deftype FramesReducible [media stream output-format]
   clojure.lang.IReduceInit

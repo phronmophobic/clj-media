@@ -1039,31 +1039,4 @@
              (list-filters))))
 
 
-(defn ^:private ->url-str [fname]
-  (str "file://" (.getCanonicalPath (io/file fname))))
 
-(defn -main [& args]
-  (let [outname (or (first args)
-                    "test.mov")
-        default-input (->url-str "/Users/adrian/workspace/eddie/vids/guitar_notes.mp4")
-        [inname outname]
-        (case (count args)
-          0 [default-input
-             "test.mp4"]
-          1 [default-input
-             (first args)]
-
-          ;; else
-          [(str "file://" (.getCanonicalPath (io/file (first args))))
-           (second args)]
-          )]
-    (fm/write! (-> (fm/->MediaFile
-                 inname)
-
-                   (->> (->AVFilterMedia "aecho" {} #{:media-type/audio})
-                        (->AVFilterMedia "aecho" {} #{:media-type/audio})
-                        (->AVFilterMedia "volume" {:volume "0"} #{:media-type/audio})
-                        (->AVFilterMedia "edgedetect" {:mode "canny"} #{:media-type/video})
-                        (fm/->Scale 0.5 1.5))
-                   )
-            outname)))

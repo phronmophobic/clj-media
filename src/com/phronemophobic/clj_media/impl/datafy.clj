@@ -398,22 +398,50 @@
           :pixel-format (pixel-format->kw (:format params))})))))
 
 
+(defn ->avrational [num den]
+  (doto (AVRational.)
+    (.writeField "num" (int num))
+    (.writeField "den" (int den))))
+
+(defn clj->avrational [o]
+  (cond
+    (instance? AVRational o)
+    o
+
+    (ratio? o)
+    (->avrational (numerator o)
+                  (denominator o))
+    (vector? o)
+    (->avrational (first o)
+                  (second o))
+
+    ;; treat as fps
+    (integer? o)
+    (->avrational 1 o)
+
+    :else
+    (throw (ex-info "Invalid rational."
+                    {:o o}))))
+
 (defn map->format
   ([format media-type]
    (map->format (assoc format
                        :media-type media-type)))
   ([format]
-   (case (:media-type format)
-     :media-type/audio
-     (assoc format
-            :ch-layout
-            (doto (str->ch-layout
-                   (:channel-layout format))
-              .read)
-            :sample-format (int (kw->sample-format
-                                 (:sample-format format)))
-            :sample-rate (int (:sample-rate format)))
+   (merge
+    (case (:media-type format)
+      :media-type/audio
+      (assoc format
+             :ch-layout
+             (doto (str->ch-layout
+                    (:channel-layout format))
+               .read)
+             :sample-format (int (kw->sample-format
+                                  (:sample-format format)))
+             :sample-rate (int (:sample-rate format)))
 
-     :media-type/video
-     (assoc format
-            :pixel-format (int (kw->pixel-format (:pixel-format format)))))))
+      :media-type/video
+      (assoc format
+             :pixel-format (int (kw->pixel-format (:pixel-format format)))))
+    (when-let [time-base (:time-base format)]
+      {:time-base (clj->avrational time-base)}))))

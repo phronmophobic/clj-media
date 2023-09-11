@@ -7,7 +7,13 @@
             [com.phronemophobic.clj-media :as clj-media]
             [com.phronemophobic.clj-media.avfilter :as avfilter]
             [com.phronemophobic.clj-media.model :as mm]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import
+   java.awt.image.BufferedImage
+   java.awt.Graphics2D
+   java.awt.Color
+   java.awt.RenderingHints)
+  )
 
 {:nextjournal.clerk/visibility {:code :hide :result :hide}}
 
@@ -252,6 +258,145 @@ encoded --> output.mp4
 
 ^{:nextjournal.clerk/visibility {:code :show :result :show}}
 (clj-media/probe "media/birds.mp4")
+
+
+;; ## Generating Media
+
+;; Media can be created from raw sample frames via `clj-media/make-media`.
+;; `clj-media/make-media` accepts a format and sequence of frames created
+;; using `clj-media/make-frame`.
+
+;; ### Audio generation example
+
+{:nextjournal.clerk/visibility {:code :show :result :show}}
+;; Import some helper classes.
+(import '(java.nio FloatBuffer
+                   ByteOrder
+                   ByteBuffer))
+
+(defn tone
+  "Returns the amplitude of a `hz` sine wave at time `t` in seconds."
+  [hz t]
+  (* 0.8
+     (Math/sin (* t (* 2 Math/PI)
+                  hz))))
+
+(defn tone-media
+  "Returns media of a `hz` sine tone that lasts `seconds` seconds."
+  [hz seconds]
+  (let [sample-rate 44100
+        num-samples (* sample-rate
+                       seconds)
+        format (clj-media/audio-format
+                {:channel-layout "mono"
+                 :sample-rate sample-rate
+                 :sample-format :sample-format/flt})
+        time-base sample-rate
+        frame-size 1024]
+    (clj-media/make-media
+     format
+     (sequence
+      (comp
+       (partition-all frame-size)
+       (map (fn [ptss]
+              (let [buf (doto (ByteBuffer/allocate (* frame-size
+                                                      4))
+                          (.order (ByteOrder/nativeOrder)))
+                    fbuf (.asFloatBuffer buf)]
+                (doseq [[i pts] (map-indexed vector ptss)]
+                  (.put fbuf i (float (tone hz (/ pts
+                                                  sample-rate)))))
+                (clj-media/make-frame
+                 {:bytes (.array buf)
+                  :format format
+                  :time-base time-base
+                  :pts (first ptss)})))))
+      (range num-samples)))))
+
+(def my-tone-media (tone-media 440 3))
+
+{:nextjournal.clerk/visibility {:code :hide :result :show}}
+(write! my-tone-media
+        "tone-440hz.mp3"
+        {:audio-format
+         (merge
+          (:format my-tone-media)
+          {:codec {:name "mp3",
+                   :long-name "MP3 (MPEG audio layer 3)",
+                   :id 86017}})})
+
+
+;; ### Video Generation example
+
+;; Import some helper classes.
+
+{:nextjournal.clerk/visibility {:code :show :result :hide}}
+(import 'java.awt.image.BufferedImage
+        'java.awt.Graphics2D
+        'java.awt.Color
+        'java.awt.RenderingHints)
+
+(def frame-img
+  (BufferedImage. 100 100 BufferedImage/TYPE_3BYTE_BGR))
+
+(def image-graphics
+  (let [g (.createGraphics frame-img)]
+    (.setRenderingHint ^Graphics2D g
+                       RenderingHints/KEY_ANTIALIASING
+                       RenderingHints/VALUE_ANTIALIAS_ON)
+    (.setRenderingHint ^Graphics2D g
+                       RenderingHints/KEY_TEXT_ANTIALIASING,
+                       RenderingHints/VALUE_TEXT_ANTIALIAS_ON)
+    g))
+
+(def frame-format
+  (clj-media/video-format {:pixel-format :pixel-format/rgb24
+                           :time-base 24
+                           :line-size (* (.getWidth frame-img)
+                                         ;; rgb24 has 3 bytes per pixel when packed
+                                         3)
+                           :width (.getWidth frame-img)
+                           :height (.getHeight frame-img)}))
+
+(defn img->frame [img pts time-base]
+  (clj-media/make-frame
+   {:bytes (-> img
+               (.getData)
+               (.getDataBuffer)
+               (.getData))
+    :format frame-format
+    :time-base time-base
+    :pts pts}))
+
+
+(def generated-frames
+  (let [frame-rate 24
+        seconds 3
+        num-frames (* seconds frame-rate)]
+   (into []
+         (map (fn [pts]
+                (.setColor ^Graphics2D image-graphics (Color/WHITE))
+                (.fillRect image-graphics 0 0
+                           (.getWidth frame-img)
+                           (.getHeight frame-img))
+                (.setColor ^Graphics2D image-graphics (Color/BLACK))
+                (.drawString image-graphics (str "pts: " pts)
+                             5 50)
+                (img->frame frame-img pts frame-rate)))
+         (range num-frames))))
+
+
+{:nextjournal.clerk/visibility {:code :hide :result :show}}
+(write! (clj-media/make-media frame-format
+                              generated-frames)
+        "generated-movie.mp4"
+        {:video-format
+         (assoc frame-format
+                :codec {:name "h264",
+                        :long-name "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+                        :media-type :media-type/video,
+                        :id 27}
+                :pixel-format :pixel-format/yuv420p)})
 
 
 ;; ## Filtering

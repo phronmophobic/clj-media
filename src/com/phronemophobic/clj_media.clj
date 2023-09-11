@@ -2,6 +2,7 @@
   (:require
    [com.phronemophobic.clj-media.impl.filter.media
     :as fm]
+   [com.phronemophobic.clj-media.model :as mm]
    [com.phronemophobic.clj-media.impl.datafy
     :as datafy-media]
    [com.phronemophobic.clj-media.avfilter
@@ -49,7 +50,8 @@
    format
    {:channel-layout channel-layout
     :sample-format sample-format
-    :sample-rate sample-rate}))
+    :sample-rate sample-rate
+    :media-type :media-type/audio}))
 
 (defn video-format
   "Convenience function for returning an audio format."
@@ -64,7 +66,8 @@
 
   (merge
    format
-   {:pixel-format pixel-format}))
+   {:pixel-format pixel-format
+    :media-type :media-type/video}))
 
 (defn write!
   "Write media to the path given by `dest`.
@@ -152,13 +155,54 @@
   "Plays the first audio stream in `media`."
   [media]
   (transduce
-   (audio/frame->buf raw/AV_SAMPLE_FMT_S16)
+   (comp
+    (map mm/byte-buffer)
+    (map (fn [buf]
+           (let [bytes (byte-array (.capacity buf))]
+             (.get buf bytes)
+             bytes))))
    (audio/play-sound)
    0
-   (frames media :audio {:audio-format (audio-format
-                                        {:ch-layout "stereo"
-                                         :sample-rate 44100
-                                         :sample-format :sample-format/s16})})))
+   (frames media :audio {:format (audio-format
+                                  {:channel-layout "stereo"
+                                   :sample-rate 44100
+                                   :sample-format :sample-format/s16})}))
+  nil)
+
+
+(defn make-frame
+  "Returns an opaque, raw frame for creating media with `make-media`.
+
+  The following keys are required:
+  `:format`: map describing the format returned by `audio-format` or `video-format`.
+  `:bytes`: a byte array with the raw data adhering to `:format`.
+  `:time-base`: a ratio of that `pts` will be specified in. `:time-base` typically
+                matches the frame rate for video or sample rate for audio.
+
+                `time-base` can specified using 3 different methods:
+                 - as a ratio: (eg. 1/60)
+                 - as a 2 element vector of [numerator, denominator]: (eg. [1 60])
+                 - as an integer. It will be treated as 1/time-base: (eg. 60).
+  `:pts`: the presentation timestamp in `:time-base` units.
+          (time in seconds) = pts * time-base.
+
+  The following keys are optional:
+  `:key-frame?`: specifies whether the current frame should be a key frame.
+
+"
+  [{:keys [bytes
+           format
+           time-base
+           key-frame?
+           pts]
+    :as m}]
+  (av/make-frame m))
+
+(defn make-media
+  "Returns media using raw data found in `frames`. `frames`
+  must be a sequence of frames created with `make-frame`."
+  [format frames]
+  (fm/media-frames format frames))
 
 (comment
   (av/probe "my-video.mp4")
