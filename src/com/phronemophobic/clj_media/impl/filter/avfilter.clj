@@ -999,6 +999,8 @@
              (let [unsupported-options
                    (eduction
                     (remove supported-filter-option?)
+                    (remove #(= (:type %)
+                                :avoption-type/const))
                     (map :name)
                     (:options filter-info))]
                (when (seq unsupported-options)
