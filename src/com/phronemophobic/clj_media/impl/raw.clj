@@ -110,11 +110,16 @@
     ((requiring-resolve 'com.phronemophobic.clong.clang/easy-api) nil
        clang-args)))
 
-(defn ^:private dump-av-api []
-  (let [api (parse-av-api)]
-    (with-open [w (io/writer (io/file
-                              "resources"
-                              "av-api.edn"))]
+(defn ^:private dump-api []
+  (let [outf (io/file
+              "resources"
+              "com"
+              "phronemophobic"
+              "clj-media"
+              "api.edn")
+        api (parse-av-api)]
+    (.mkdirs (.getParentFile outf))
+    (with-open [w (io/writer outf)]
       ((requiring-resolve 'com.phronemophobic.clong.clang/write-edn) w api))))
 
 (defn pointer? [datatype]
@@ -154,7 +159,9 @@
 
 (def av-api
   (with-hacks
-    (with-open [rdr (io/reader (io/resource "av-api.edn"))
+    (with-open [rdr (io/reader
+                     (io/resource
+                      "com/phronemophobic/clj-media/api.edn"))
                 pbr (PushbackReader. rdr)]
       (edn/read pbr))))
 
