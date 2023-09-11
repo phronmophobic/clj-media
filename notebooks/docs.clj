@@ -163,6 +163,14 @@ encoded --> output.mp4
 ;;                               :git/url "https://github.com/phronmophobic/clj-media"}
 ;; ```
 
+;; ### Linux dependencies
+
+;; The `libxcb-shape0` dependency must be installed to use clj-media on linux.
+;; It can usually be installed via a package manager like `apt`. For example:
+
+;; ```bash
+;; sudo apt-get install libxcb-shape0
+;; ```
 
 ;; ## Requires
 
@@ -179,7 +187,7 @@ encoded --> output.mp4
 
 ;; The main operations on media are `write!` and `frames`.
 
-;; ## `write!`
+;; ## clj-media/write!
 
 ;; The basic use of `write!` is to pass media and a destination
 ;; to write the output to. 
@@ -204,7 +212,7 @@ encoded --> output.mp4
 (write! (clj-media/filter-audio my-media)
         "my-copy.mp3")
 
-;; write! also accepts an optional map. The main options are
+;; `write!` also accepts an optional map. The main options are
 ;; `:audio-format` and `:video-format` in cases where
 ;; choosing the exact format is desired.
 
@@ -217,7 +225,7 @@ encoded --> output.mp4
 ;; as well as the supported formats.
 
 
-;; ## `frames`
+;; ## clj-media/frames
 
 ;; The `frames` function will return a reducible. The reason that
 ;; `frames` does not return a collection or lazy sequence is that
@@ -228,14 +236,14 @@ encoded --> output.mp4
 ;; and memory usage. However, improvements can be made without
 ;; changing or breaking the higher level API._
 
-;; ### Obtaining a the first frame
+;; ### Obtaining the first frame
 
 ^{:nextjournal.clerk/visibility {:code :show :result :show}}
 (reduce (fn [_ frame] frame) nil (clj-media/frames my-media :audio))
 
-;; The functions for examining frames can be found in the `com.phronemophobic.clj-media.model` namespace.
+;; The functions for examining frames can be found in the [com.phronemophobic.clj-media.model](https://phronmophobic.github.io/clj-media/reference/com.phronemophobic.clj-media.model.html) namespace.
 
-;; ## `probe`
+;; ## clj-media/probe
 
 ;; The `probe` function will open a file and gather metadata.
 
@@ -259,6 +267,8 @@ encoded --> output.mp4
 ;; As convention, the first argument to filters is always an optional
 ;; options map followed by any media inputs which allows filters to be chained
 ;; via thread last, `->>`.
+
+;; Extra documentation about the filters in `com.phronemophobic.clj-media.avfilter` can be found at https://ffmpeg.org/ffmpeg-filters.html.
 
 ;; ### Filtering tips
 

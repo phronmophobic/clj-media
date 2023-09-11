@@ -1,6 +1,6 @@
 # clj-media
 
-View or create videos and gifs with clojure.
+Read, write, and transform audio and video with Clojure.
 
 Powered by [ffmpeg](https://ffmpeg.org/) and [clong](https://github.com/phronmophobic/clong).
 

@@ -27,7 +27,7 @@
                 com.cnuernber/codox {:mvn/version "1.001"}}
    :exec-fn codox.main/-main
    :exec-args {:name "clj-media"
-               :description "Read, write, create, and transform audio and video."
+               :description "Read, write, and transform audio and video."
                :metadata {:doc/format :markdown}
                :themes [:rdash]
                :source-paths ["src"]
