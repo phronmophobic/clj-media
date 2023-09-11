@@ -62,6 +62,6 @@ Working examples for skia, swing, and cljfx. A reasonable API is still a WIP. Cu
 
 ## License
 
-Copyright © 2021 Adrian
+Copyright © 2023 Adrian
 
-Distributed under the Eclipse Public License version 1.0.
+The contents of this repository may be distributed under the Apache License v2.0 or the GPLv2.
