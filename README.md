@@ -28,6 +28,9 @@ Features get added as time and motivation allows. If you would be excited to see
 - [ ] Fix reflection warnings.
 - [ ] Add support for creating media from raw samples.
 - [ ] Add more options for configuring output codecs.
+- [ ] Add iterator+autocloseable to frames interface.
+- [ ] Support transformation specification by copy and pasting ffmpeg commands.
+- [ ] Add support for creating media from byte buffers.
 
 ## License
 
