@@ -38,6 +38,10 @@
                             com.phronemophobic.clj-media.avfilter]}}
 
 
+  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.8.3" :git/sha "0d20256"}
+                 slipset/deps-deploy {:mvn/version "RELEASE"}}
+          :ns-default build}
+
   :generate-docs
   {:extra-deps {io.github.nextjournal/clerk {:mvn/version "0.14.919"
                                              ;;:local/root "../clerk"
