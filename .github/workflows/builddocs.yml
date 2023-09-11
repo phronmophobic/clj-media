@@ -39,6 +39,10 @@ jobs:
         uses: DeLaGuardo/setup-clojure@9.5
         with:
           cli: 1.11.1.1208
+      - name: Update packages
+        run: sudo apt-get update -y
+      - name: Install dependencies
+        run: sudo apt-get -y install libxcb-shape0
       - name: Build static
         run: clojure -X:generate-docs
       - name: Build codox
