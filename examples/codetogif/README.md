@@ -1,3 +1,5 @@
+# This example uses an old version of clj-media and needs updating!
+
 ## Code To Gif
 
 A basic example of creating gifs using clj-media.
