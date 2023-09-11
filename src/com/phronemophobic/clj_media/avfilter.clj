@@ -55,10 +55,6 @@ Supported options:
            number of streams with matching media types. All video streams
            must be the same width and height, but media formats may differ.
 
-Inputs: 
-
-Supported options:
-
 :unsafe - enable unsafe mode
 	type: bool
 	default: false
