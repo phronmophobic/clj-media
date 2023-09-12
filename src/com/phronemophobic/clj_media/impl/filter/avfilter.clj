@@ -173,11 +173,12 @@
           (filter supported-filter-option?)
           (map (fn [option]
                  (let [s (:name option)
+                       unit (:unit option)
                        k (str->kw s)
                        v## (gensym "v")]
                    `(defmethod set-filter-option [~filter-name ~k]
                       [obj# _filter-name# _k# ~v##]
-                      (let [~v## ~(if-let [const-options (get consts s)]
+                      (let [~v## ~(if-let [const-options (get consts unit)]
                                     ;; assumes int type
                                     ;; ignore :avoption-type/flags and :avoption-type/const
                                     (let [m (into {}
@@ -953,7 +954,7 @@
              (clojure.string/join
               "\n\n"
               (eduction
-               (map (fn [{:keys [name type help default-val min max]}]
+               (map (fn [{:keys [name type help default-val min max unit]}]
                       (str (str->kw name) " - " help
                            "\n"
                            (clojure.string/join
@@ -961,7 +962,7 @@
                             (eduction
                              (remove nil?)
                              (map #(str "\t" %))
-                             (if-let [const (get consts name)]
+                             (if-let [const (get consts unit)]
                                [(str "type: enum" )
                                 (str "default: " (some (fn [c]
                                                          (when (= (-> c :default-val :int)
