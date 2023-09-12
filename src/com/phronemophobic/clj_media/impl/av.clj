@@ -703,11 +703,13 @@
             (.writeField "width" (int width))
             (.writeField "height" (int height))
             (.writeField "format" pixel-format))
-          (when-let [line-size (:line-size format)]
+          (if-let [line-size (:line-size format)]
             (doto frame
               (.writeField "linesize"
                            (doto (int-array 8)
-                             (aset 0 line-size)))))
+                             (aset 0 line-size))))
+            (throw (ex-info ":line-size must be set when creating video frames."
+                            {:frame m})))
           (assert
            (>= (raw/av_frame_get_buffer frame 0)
                0))
