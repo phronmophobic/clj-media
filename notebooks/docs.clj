@@ -139,6 +139,9 @@
 
 ;; In clj-media, **filters** are transformations of frames.
 
+;; _Note: even though filters operate on frames. Most filter functions in clj-media accept
+;; and return media for convenience._
+
 ;; Filters operate on decoded, uncompressed frames. 
 ;; However, most media is stored in an encoded, compressed format.
 ;; Therefore, in order to filter media, the media must first

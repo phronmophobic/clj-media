@@ -130,7 +130,7 @@
 
 
 (defn probe
-  "Probes the file `f` and returns metadata about the media's format.
+  "Reads the file `f` and returns metadata about the media's format.
 
   `f` Any value that can be coerced to a file via `clojure.java.io/as-file`."
   [f]
@@ -143,7 +143,12 @@
   Stream can either be:
   - an index
   - `:audio`, which selects the first audio stream.
-  - `:video`, which seelcts the first video stream."
+  - `:video`, which seelcts the first video stream.
+
+  `opts` is an optional map with the following keys:
+  `:format` A media format description as returned by
+            `audio-format` or `video-format`.
+  "
   ([media]
    (fm/frames-reducible media 0 nil))
   ([media stream]
