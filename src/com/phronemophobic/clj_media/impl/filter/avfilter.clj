@@ -136,8 +136,10 @@
     (av_opt_set_pixel_fmt o k pix-fmt AV_OPT_SEARCH_CHILDREN)))
 #_(defmethod set-option :avoption-type/binary
   [o _ k v])
-#_(defmethod set-option :avoption-type/color
-  [o _ k v])
+(defmethod set-option :avoption-type/color
+  [o _ k v]
+  (assert (string? v) "Colors must be string.")
+  (av_opt_set o k v AV_OPT_SEARCH_CHILDREN))
 (defmethod set-option :avoption-type/bool
   [o _ k v]
   (av_opt_set_int o k
