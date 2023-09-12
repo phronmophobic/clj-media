@@ -286,6 +286,7 @@
 
 (def ^:private pixel-format->buffered-image-format
   {(datafy-media/kw->pixel-format :pixel-format/rgb24) BufferedImage/TYPE_3BYTE_BGR
+   (datafy-media/kw->pixel-format :pixel-format/rgba) BufferedImage/TYPE_4BYTE_ABGR
    (datafy-media/kw->pixel-format :pixel-format/rgb555le) BufferedImage/TYPE_USHORT_555_RGB
    (datafy-media/kw->pixel-format :pixel-format/rgb565le) BufferedImage/TYPE_USHORT_565_RGB
    })
@@ -308,7 +309,8 @@
 
         get-buf
         (condp contains? (.getType img)
-          #{BufferedImage/TYPE_3BYTE_BGR} (fn [y] (.getByteArray buf-ptr (* linesize y) linesize))
+          #{BufferedImage/TYPE_3BYTE_BGR
+            BufferedImage/TYPE_4BYTE_ABGR} (fn [y] (.getByteArray buf-ptr (* linesize y) linesize))
           #{BufferedImage/TYPE_USHORT_555_RGB
             BufferedImage/TYPE_USHORT_565_RGB} (fn [y] (.getShortArray buf-ptr (* linesize y) (/ linesize 2))))]
 
