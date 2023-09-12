@@ -284,7 +284,7 @@
         ([result]
          ;; flush
          (doseq [buffer-context input-contexts]
-           (av_buffersrc_add_frame buffer-context nil))
+           (av_buffersrc_write_frame buffer-context nil))
          (let [result
                (loop [result result]
                  (let [frame (av/new-frame)
@@ -312,8 +312,8 @@
            (rf result)))
         ([result [input-idx input-frame]]
          (let [buffer-context (nth input-contexts input-idx)]
-           (av_buffersrc_add_frame buffer-context
-                                   input-frame))
+           (av_buffersrc_write_frame buffer-context
+                                     input-frame))
          (loop [result result]
            (let [frame (av/new-frame)
                  ;; TODO: check av_buffersink_get* to
@@ -424,7 +424,7 @@
         ([result]
          ;; flush
          (doseq [buffer-context input-contexts]
-           (av_buffersrc_add_frame buffer-context nil))
+           (av_buffersrc_write_frame buffer-context nil))
          (let [result
                (loop [result result]
                  (let [frame (av/new-frame)
@@ -452,8 +452,8 @@
            (rf result)))
         ([result [input-index input-frame]]
          (let [buffer-context (nth input-contexts input-index)]
-           (av_buffersrc_add_frame buffer-context
-                                  input-frame))
+           (av_buffersrc_write_frame buffer-context
+                                     input-frame))
          (loop [result result]
            (let [frame (av/new-frame)
                  ;; TODO: check av_buffersink_get* to
@@ -720,9 +720,9 @@
          (rf))
         ([result]
          (rf result)
-         flush
+         ;; flush
          (doseq [buffer-context input-contexts]
-           (av_buffersrc_add_frame buffer-context nil))
+           (av_buffersrc_write_frame buffer-context nil))
          (let [result
                (reduce
                 (fn [result [i output-context]]
@@ -760,8 +760,8 @@
          )
         ([result [input-idx input-frame]]
          (let [buffer-context (nth input-contexts input-idx)]
-           (av_buffersrc_add_frame buffer-context
-                                   input-frame))
+           (av_buffersrc_write_frame buffer-context
+                                     input-frame))
          (reduce
           (fn [result [i output-context]]
             (loop [result result]

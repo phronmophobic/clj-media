@@ -166,8 +166,8 @@
             (.setValue (.getPointer filter-graph))))
          (rf result))
         ([result input-frame]
-         (av_buffersrc_add_frame buffer-context
-                                 input-frame)
+         (av_buffersrc_write_frame buffer-context
+                                   input-frame)
          (loop [result result]
            (let [frame (av/new-frame)
                  err (av_buffersink_get_frame_flags buffersink-context
