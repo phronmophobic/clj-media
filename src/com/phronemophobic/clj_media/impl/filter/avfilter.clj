@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [clojure.datafy :as d]
             [com.phronemophobic.clj-media.impl.datafy
+             :refer [set-option]
              :as datafy-media]
             [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
@@ -40,115 +41,6 @@
         (if flt
           (recur (conj flts (d/datafy flt)))
           flts)))))
-
-
-
-
-(defmulti set-option (fn [o type k v]
-                       type))
-
-
-
-#_(defmethod set-option :avoption-type/flags
-  [o _ k v])
-(defmethod set-option :avoption-type/float
-  [o _ k v]
-  (av_opt_set_double o k v AV_OPT_SEARCH_CHILDREN))
-(defmethod set-option :avoption-type/rational
-  [o _ k v]
-  (when-not (ratio? v)
-    (throw (ex-info "Option type :avoption-type/rational must be set with Ratio."
-                    {:o o
-                     :k k
-                     :v v})))
-  (av_opt_set_q o k
-                (av/->avrational (numerator v)
-                                 (denominator v))
-                AV_OPT_SEARCH_CHILDREN))
-(defmethod set-option :avoption-type/duration
-  [o _ k v]
-  (set-option o :avoption-type/int64 k v))
-(defmethod set-option :avoption-type/int64
-  [o _ k v]
-  (av_opt_set_int o k v AV_OPT_SEARCH_CHILDREN))
-(defmethod set-option :avoption-type/double
-  [o _ k v]
-  (av_opt_set_double o k v AV_OPT_SEARCH_CHILDREN))
-(defmethod set-option :avoption-type/int
-  [o _ k v]
-  (av_opt_set_int o k v AV_OPT_SEARCH_CHILDREN))
-#_(defmethod set-option :avoption-type/dict
-  [o _ k v])
-(defmethod set-option :avoption-type/image-size
-  [o _ k v]
-  (let [[w h] v]
-   (av_opt_set_image_size o k w h AV_OPT_SEARCH_CHILDREN)))
-(defmethod set-option :avoption-type/video-rate
-  [o _ k v]
-  (let [ratio
-        (cond
-          (ratio? v) (av/->avrational (numerator v) (denominator v))
-          (integer? v) (av/->avrational 1 v)
-          (and (seqable? v)
-               (= 2 (count v))) (av/->avrational (first v) (second v))
-          :else (throw
-                 (ex-info "Could not set video rate"
-                          {:o o
-                           :k k
-                           :v v})))]
-   (av_opt_set_video_rate o k ratio AV_OPT_SEARCH_CHILDREN)))
-(defmethod set-option :avoption-type/string
-  [o _ k v]
-  (av_opt_set o k v AV_OPT_SEARCH_CHILDREN))
-#_(defmethod set-option :avoption-type/const
-  [o _ k v])
-(defmethod set-option :avoption-type/sample-fmt
-  [o _ k v]
-  (let [kw->sample-format
-        (into {}
-              (map (fn [[k v]]
-                     [v k]))
-              datafy-media/sample-format->kw)
-        fmt (or
-             (get kw->sample-format v)
-             v)]
-    (when-not (contains? datafy-media/sample-format->kw fmt)
-      (throw (ex-info "Invalid sample format."
-                      {:o o
-                       :k k
-                       :v v})))
-    (av_opt_set_sample_fmt o k fmt AV_OPT_SEARCH_CHILDREN)))
-(defmethod set-option :avoption-type/pixel-fmt
-  [o _ k v]
-  (let [kw->pixel-format
-        (into {}
-              (map (fn [[k v]]
-                     [v k]))
-              datafy-media/pixel-format->kw)
-        pix-fmt (or
-                 (get kw->pixel-format v)
-                 v)]
-    (when-not (contains? datafy-media/pixel-format->kw pix-fmt)
-      (throw (ex-info "Invalid pixel format."
-                      {:o o
-                       :k k
-                       :v v})))
-    (av_opt_set_pixel_fmt o k pix-fmt AV_OPT_SEARCH_CHILDREN)))
-#_(defmethod set-option :avoption-type/binary
-  [o _ k v])
-(defmethod set-option :avoption-type/color
-  [o _ k v]
-  (assert (string? v) "Colors must be string.")
-  (av_opt_set o k v AV_OPT_SEARCH_CHILDREN))
-(defmethod set-option :avoption-type/bool
-  [o _ k v]
-  (av_opt_set_int o k
-                  (case v
-                    (true 1) 1
-                    ;; else
-                    0)
-                  AV_OPT_SEARCH_CHILDREN))
-
 
 (defmulti set-filter-option
   (fn [obj filter-name k v]
