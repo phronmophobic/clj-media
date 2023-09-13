@@ -133,3 +133,8 @@ Supported options:
        (atrim opts)
        (setpts {:expr "PTS-STARTPTS"})
        (asetpts {:expr "PTS-STARTPTS"})))
+
+(defn swscale
+  "Similar to scale, but also allows setting the output-format."
+  [opts output-format media]
+  (avfilter/swscale opts output-format media))

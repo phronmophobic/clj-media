@@ -887,3 +887,41 @@
 
 
 
+(defrecord ForceFormat [format media]
+  fm/IMediaSource
+  (-media [this]
+    (mapv (fn [src]
+            (fm/->FrameSource
+             (fm/-frames src)
+             (merge
+              (fm/-format src)
+              (datafy-media/map->format format))))
+          (fm/-media media))))
+
+(defn force-format
+  "Used for testing."
+  [format media]
+  (->ForceFormat format media))
+
+(defrecord Swscale [opts output-format media]
+  fm/IMediaSource
+  (-media [this]
+    (mapv (fn [src]
+            (if (fm/video? src)
+              (let [input-format (fm/-format src)
+                    output-format
+                    (merge
+                     input-format
+                     (datafy-media/map->format output-format
+                                               :media-type/video))]
+                (fm/->FrameSource
+                 (sequence
+                  (video/swscale input-format output-format opts)
+                  (fm/-frames src))
+                 output-format))
+              src))
+          (fm/-media media))))
+
+(defn swscale [opts output-format media]
+  (->Swscale opts output-format media))
+
