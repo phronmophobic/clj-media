@@ -416,8 +416,8 @@
                 pixel-format]} format
 
         gop-size (or (:gop-size format)
-                     ;; I asked chat gpt and it said anywhere between 2 and 15 ¯\_(ツ)_/¯
-                     10
+                     ;; default for ffmpeg
+                     12
                      )
 
 
