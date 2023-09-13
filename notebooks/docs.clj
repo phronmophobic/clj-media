@@ -393,10 +393,12 @@ encoded --> output.mp4
 (write! (clj-media/make-media frame-format
                               generated-frames)
         "generated-movie.mp4"
-        {:codec {:name "h264",
-                 :long-name "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
-                 :media-type :media-type/video,
-                 :id 27},})
+        {:video-format
+         {:codec {:name "h264",
+                  :long-name "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+                  :media-type :media-type/video,
+                  :id 27}
+          :pixel-format :pixel-format/yuv420p}})
 
 
 ;; ## Filtering
