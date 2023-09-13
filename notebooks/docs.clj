@@ -390,7 +390,7 @@ encoded --> output.mp4
 
 
 {:nextjournal.clerk/visibility {:code :hide :result :show}}
-(clj-media/write! (clj-media/make-media frame-format
+(write! (clj-media/make-media frame-format
                               generated-frames)
         "generated-movie.mp4")
 
