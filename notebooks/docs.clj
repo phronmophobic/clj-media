@@ -392,7 +392,11 @@ encoded --> output.mp4
 {:nextjournal.clerk/visibility {:code :hide :result :show}}
 (write! (clj-media/make-media frame-format
                               generated-frames)
-        "generated-movie.mp4")
+        "generated-movie.mp4"
+        {:codec {:name "h264",
+                 :long-name "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+                 :media-type :media-type/video,
+                 :id 27},})
 
 
 ;; ## Filtering
