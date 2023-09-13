@@ -6,7 +6,9 @@
             [clojure.string :as str]
             [clojure.datafy :as d]
             [com.phronemophobic.clj-media.impl.datafy
-             :refer [set-option]
+             :refer [set-filter-context-options
+                     supported-filter-option?
+                     list-filters]
              :as datafy-media]
             [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
@@ -34,63 +36,6 @@
 
 (raw/import-structs!)
 
-(defn list-filters []
-  (let [iter-data (PointerByReference. Pointer/NULL)]
-    (loop [flts []]
-      (let [flt (av_filter_iterate iter-data)]
-        (if flt
-          (recur (conj flts (d/datafy flt)))
-          flts)))))
-
-(defmulti set-filter-option
-  (fn [obj filter-name k v]
-    [filter-name k]))
-
-(defn set-filter-context-options [filter-context filter-name opts]
-  (doseq [[k v] opts]
-    (set-filter-option filter-context filter-name k v)))
-
-(defn supported-filter-option? [option]
-  (get-method set-option (:type option)))
-
-(defn filter-setters [filter-info]
-  (let [filter-name (:name filter-info)
-        options (:options filter-info)
-        consts (->> options
-                    (filter #(= (:type %)
-                                :avoption-type/const))
-                    (group-by :unit))]
-    `(do
-       ~@(eduction
-          (filter supported-filter-option?)
-          (map (fn [option]
-                 (let [s (:name option)
-                       unit (:unit option)
-                       k (str->kw s)
-                       v## (gensym "v")]
-                   `(defmethod set-filter-option [~filter-name ~k]
-                      [obj# _filter-name# _k# ~v##]
-                      (let [~v## ~(if-let [const-options (get consts unit)]
-                                    ;; assumes int type
-                                    ;; ignore :avoption-type/flags and :avoption-type/const
-                                    (let [m (into {"none" 0}
-                                                  (map (fn [opt]
-                                                         [(-> opt
-                                                              :name)
-                                                          (-> opt
-                                                              :default-val
-                                                              :int)]))
-                                                  const-options)] 
-                                      `(get ~m ~v## ~v##))
-                                    v##)]
-                        (set-option obj# ~(:type option) ~s ~v##))))))
-          options))))
-
-(defmacro make-setters []
-  `(do
-     ~@(mapv filter-setters (list-filters))))
-
-(make-setters)
 
 (defn video-filter [input-formats filter-name opts]
   (fn [rf]

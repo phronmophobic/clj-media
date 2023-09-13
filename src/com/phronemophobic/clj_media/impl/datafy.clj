@@ -3,7 +3,8 @@
             [clojure.datafy :as d]
             [clojure.core.protocols :as p]
             [com.phronemophobic.clj-media.impl.util
-             :refer [normalize-str]]
+             :refer [normalize-str
+                     str->kw]]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all])
   (:import
@@ -142,6 +143,19 @@
    :long (read-bytes :avoption-type/int64 bs)
    :int (read-bytes :avoption-type/int bs)})
 
+
+(extend-protocol p/Datafiable
+  AVClassByReference
+  (datafy [cls]
+    (when cls
+      {:options
+       (let [cls* (PointerByReference. (.getPointer cls))]
+         (loop [prev nil
+                opts []]
+           (let [o (av_opt_next cls* prev)]
+             (if o
+               (recur o (conj opts (d/datafy o)))
+               opts))))})))
 
 (defn filter-options [flt]
   (let [cls (:priv_class flt)]
@@ -551,3 +565,71 @@
                     ;; else
                     0)
                   AV_OPT_SEARCH_CHILDREN))
+
+(defn list-filters []
+  (let [iter-data (PointerByReference. Pointer/NULL)]
+    (loop [flts []]
+      (let [flt (av_filter_iterate iter-data)]
+        (if flt
+          (recur (conj flts (d/datafy flt)))
+          flts)))))
+
+;; (defmulti set-option
+;;   (fn [obj class-name k v]
+;;     [class-name k]))
+
+(defn set-filter-context-options [filter-context filter-name opts]
+  (doseq [[k v] opts]
+    (set-option filter-context [filter-name k] k v)))
+
+(defn supported-filter-option? [option]
+  (get-method set-option (:type option)))
+
+(defn option-setter-fns [class-name options]
+  (let [consts (->> options
+                    (filter #(= (:type %)
+                                :avoption-type/const))
+                    (group-by :unit))]
+    `(do
+       ~@(eduction
+          (filter supported-filter-option?)
+          (map (fn [option]
+                 (let [s (:name option)
+                       unit (:unit option)
+                       k (str->kw s)
+                       v## (gensym "v")]
+                   `(defmethod set-option [~class-name ~k]
+                      [obj# _class-name# _k# ~v##]
+                      (let [~v## ~(if-let [const-options (get consts unit)]
+                                    ;; assumes int type
+                                    ;; ignore :avoption-type/flags and :avoption-type/const
+                                    (let [m (into {"none" 0}
+                                                  (map (fn [opt]
+                                                         [(-> opt
+                                                              :name)
+                                                          (-> opt
+                                                              :default-val
+                                                              :int)]))
+                                                  const-options)]
+                                      `(get ~m ~v## ~v##))
+                                    v##)]
+                        (set-option obj# ~(:type option) ~s ~v##))))))
+          options)))
+  )
+
+(defn filter-setters [filter-info]
+  (let [filter-name (:name filter-info)
+        options (:options filter-info)]
+    ;; maybe should namespace in the future?
+    (option-setter-fns filter-name options)))
+
+(defmacro make-filter-setters []
+  `(do
+     ~@(mapv filter-setters (list-filters))))
+
+(make-filter-setters)
+
+(defmacro make-swscale-setters []
+  (option-setter-fns "swscale" (:options (d/datafy (sws_get_class)))))
+
+(make-swscale-setters)

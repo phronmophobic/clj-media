@@ -427,18 +427,17 @@
   ([input-format output-format]
    (swscale input-format output-format nil))
   ([input-format output-format opts]
-   (let [flags (or (:flags opts)
-                   SWS_BILINEAR)
-         sws-ctx (sws_getContext (:width input-format)
-                                 (:height input-format)
-                                 (:pixel-format input-format)
-                                 (:width output-format)
-                                 (:height output-format)
-                                 (:pixel-format output-format)
-                                 flags
-                                 nil
-                                 nil
-                                 nil)
+   (let [sws-ctx (doto (sws_alloc_context)
+                   (datafy-media/set-option ["swscale" :srcw] :srcw (:width input-format))
+                   (datafy-media/set-option ["swscale" :srch] :srch (:height input-format))
+                   (datafy-media/set-option ["swscale" :src-format] :src-format (:pixel-format input-format))
+                   (datafy-media/set-option ["swscale" :dstw] :dstw (:width output-format))
+                   (datafy-media/set-option ["swscale" :dsth] :dsth (:height output-format))
+                   (datafy-media/set-option ["swscale" :dst-format] :dst-format (:pixel-format output-format)))
+         _ (doseq [[k v] opts]
+             (datafy-media/set-option sws-ctx ["swscale" k] k v))
+
+         _ (sws_init_context sws-ctx nil nil)
          _ (when (nil? sws-ctx)
              (throw (Exception. "Error creating sws context.")))
          sws-ctx-ptr (Pointer/nativeValue sws-ctx)
