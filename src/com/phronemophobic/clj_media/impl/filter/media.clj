@@ -247,12 +247,15 @@
   "Chooses an output format. Returns the input format if supported by the output format.
   Otherwise, tries to choose a good default"
   [output-format input-format]
-  (let [;; assume that codecs can encode what they decode
-        supported? (= 1
-                      (avformat_query_codec
-                       output-format
-                       (-> input-format :codec :id)
-                       raw/FF_COMPLIANCE_NORMAL))]
+  (let [input-codec-id (-> input-format :codec :id)
+        ;; assume that codecs can encode what they decode
+        supported? (and
+                    input-codec-id
+                    (= 1
+                       (avformat_query_codec
+                        output-format
+                        input-codec-id
+                        raw/FF_COMPLIANCE_NORMAL)))]
     (if supported?
       input-format
       ;; else choose a default based on what the
