@@ -184,6 +184,7 @@ encoded --> output.mp4
 ;; ```clojure
 ;; (require '[com.phronemophobic.clj-media.model :as mm])
 ;; (require '[com.phronemophobic.clj-media :as clj-media])
+;; (require '[com.phronemophobic.clj-media.avfilter :as avfilter])
 ;; ```
 
 ;; Typically, media is obtained from a file
