@@ -166,10 +166,8 @@ encoded --> output.mp4
 
 ;; ## Dependency
 
-;; Currently only available via git dep.
 ;; ```clojure
-;; com.phronemophobic/clj-media {:git/sha "53a3c2015af973ec67dec036e08086cfac0d2107"
-;;                               :git/url "https://github.com/phronmophobic/clj-media"}
+;; com.phronemophobic/clj-media {:mvn/version "2.0"}
 ;; ```
 
 ;; ### Linux dependencies

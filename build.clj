@@ -3,7 +3,7 @@
             [clojure.string :as str]))
 
 (def lib 'com.phronemophobic/clj-media)
-(def version "2.0-SNAPSHOT")
+(def version "2.0")
 
 (def class-dir "target/classes")
 (def basis (b/create-basis {:project "deps.edn"}))
