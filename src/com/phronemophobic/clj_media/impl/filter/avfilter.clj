@@ -181,7 +181,7 @@
                       (let [~v## ~(if-let [const-options (get consts unit)]
                                     ;; assumes int type
                                     ;; ignore :avoption-type/flags and :avoption-type/const
-                                    (let [m (into {}
+                                    (let [m (into {"none" 0}
                                                   (map (fn [opt]
                                                          [(-> opt
                                                               :name)
@@ -963,19 +963,26 @@
                              (remove nil?)
                              (map #(str "\t" %))
                              (if-let [const (get consts unit)]
-                               [(str "type: enum" )
-                                (str "default: " (some (fn [c]
-                                                         (when (= (-> c :default-val :int)
-                                                                  default-val)
-                                                           (:name c)))
-                                                       const))
-                                (str "values: "
-                                     (clojure.string/join
-                                      ", "
-                                      (eduction
-                                       (map :name)
-                                       (map #(str "\"" % "\""))
-                                       const)))]
+                               (let [has-none? (and (zero? min)
+                                                    (not (some (fn [c]
+                                                                 (zero? (-> c :default-val :int)))
+                                                               const)))
+                                     const (if has-none?
+                                             (conj const {:name "none"})
+                                             const)]
+                                 [(str "type: enum" )
+                                  (str "default: " (some (fn [c]
+                                                           (when (= (-> c :default-val :int)
+                                                                    default-val)
+                                                             (:name c)))
+                                                         const))
+                                  (str "values: "
+                                       (clojure.string/join
+                                        ", "
+                                        (eduction
+                                         (map :name)
+                                         (map #(str "\"" % "\""))
+                                         const)))])
                                (case type
                                  :avoption-type/duration
                                  [(str "type: duration in microseconds" )
