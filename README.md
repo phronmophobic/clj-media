@@ -2,7 +2,7 @@
 
 Read, write, and transform audio and video with Clojure.
 
-Powered by [ffmpeg](https://ffmpeg.org/) and [clong](https://github.com/phronmophobic/clong).
+Powered by [FFmpeg](https://ffmpeg.org/) and [clong](https://github.com/phronmophobic/clong).
 
 
 ## Dependency
