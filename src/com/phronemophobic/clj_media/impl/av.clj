@@ -389,7 +389,7 @@
           (throw (Exception. "Could not initialize stream params")))
         stream))
 
-(defn video-encoder-context [output-format-context format]
+(defn video-encoder-context [format]
   (let [codec-id (-> format :codec :id)
 
         output-codec (avcodec_find_encoder codec-id)
@@ -437,7 +437,7 @@
               (.writeField "bit_rate" bit-rate)))]
     encoder-context))
 
-(defn audio-encoder-context [output-format-context format]
+(defn audio-encoder-context [format]
   (let [codec-id (-> format :codec :id)
         output-codec (avcodec_find_encoder codec-id)
         _ (when (nil? output-codec)
@@ -467,10 +467,10 @@
 
     encoder-context))
 
-(defn encoder-context [output-format-context format]
+(defn encoder-context [format]
   (case (:media-type format)
-    :media-type/video (video-encoder-context output-format-context format)
-    :media-type/audio (audio-encoder-context output-format-context format)))
+    :media-type/video (video-encoder-context format)
+    :media-type/audio (audio-encoder-context format)))
 
 (defn find-decoder-context [media-type format-context]
   (let [err (avformat_find_stream_info format-context nil)

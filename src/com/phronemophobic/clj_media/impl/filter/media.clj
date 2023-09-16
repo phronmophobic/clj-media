@@ -374,7 +374,7 @@
                                                   (:oformat output-format-context))
                            input-format))
 
-                        encoder-context (av/encoder-context output-format-context output-format)
+                        encoder-context (av/encoder-context output-format)
 
                         stream (av/add-stream output-format-context encoder-context)
                         stream-index (:index stream)
