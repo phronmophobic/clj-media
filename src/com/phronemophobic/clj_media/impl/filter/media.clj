@@ -92,63 +92,64 @@
           packets (sequence
                    av/read-frame
                    [format-context])]
-      (into []
-            (comp
-             (map (fn [stream]
-                    (let [stream+ (Structure/newInstance AVStreamByReference
-                                                         stream)
-                          stream-index (:index stream+)
+      (->> streams
+           (map (fn [stream] (Structure/newInstance AVStreamByReference stream)))
+           (filter (fn [stream+] (#{(datafy-media/kw->media-type :media-type/video)
+                                    (datafy-media/kw->media-type :media-type/audio)} (-> stream+ :codecpar :codec_type))))
+           (into []
+                 (comp
+                  (map (fn [stream+]
+                         (let [stream-index (:index stream+)
 
-                          codec-parameters (:codecpar stream+)
-                          codec-id (:codec_id codec-parameters)
-                          decoder (avcodec_find_decoder codec-id)
-                          _ (when (nil? decoder)
-                              (throw (ex-info "Could not find decoder"
-                                              {:codec-id codec-id})))
-                          decoder-context (avcodec_alloc_context3 (.getPointer decoder))
+                               codec-parameters (:codecpar stream+)
+                               codec-id (:codec_id codec-parameters)
+                               decoder (avcodec_find_decoder codec-id)
+                               _ (when (nil? decoder)
+                                   (throw (ex-info "Could not find decoder"
+                                                   {:codec-id codec-id})))
+                               decoder-context (avcodec_alloc_context3 (.getPointer decoder))
 
-                          _ (when (nil? decoder-context)
-                              (throw (ex-info "Could not allocate decoder"
-                                              {})))
-                          _ (doto decoder-context
-                              (.writeField "time_base"
-                                           (.readField stream+ "time_base")))
+                               _ (when (nil? decoder-context)
+                                   (throw (ex-info "Could not allocate decoder"
+                                                   {})))
+                               _ (doto decoder-context
+                                   (.writeField "time_base"
+                                                (.readField stream+ "time_base")))
 
-                          _ (avcodec_parameters_to_context decoder-context codec-parameters)
-                          err (avcodec_open2 decoder-context decoder nil)
-                          _ (when (neg? err)
-                              (throw (Exception. "Could not open codec"
-                                                 {:error-code err})))
+                               _ (avcodec_parameters_to_context decoder-context codec-parameters)
+                               err (avcodec_open2 decoder-context decoder nil)
+                               _ (when (neg? err)
+                                   (throw (Exception. "Could not open codec"
+                                                      {:error-code err})))
 
-                          format (merge {:time-base (:time_base stream+)}
-                                        (av/codec-context-format decoder-context))
+                               format (merge {:time-base (:time_base stream+)}
+                                             (av/codec-context-format decoder-context))
 
-                          time-base (condp = (:codec_type decoder-context)
-                                      AVMEDIA_TYPE_AUDIO [1 (:sample-rate format)]
-                                      AVMEDIA_TYPE_VIDEO (let [tb (:time_base stream+)]
-                                                           [(:num tb) (:den tb)]))
-                          format (assoc format
-                                        :time-base
-                                        (av/->avrational (first time-base)
-                                                     (second time-base)))
+                               time-base (condp = (:codec_type decoder-context)
+                                           AVMEDIA_TYPE_AUDIO [1 (:sample-rate format)]
+                                           AVMEDIA_TYPE_VIDEO (let [tb (:time_base stream+)]
+                                                                [(:num tb) (:den tb)]))
+                               format (assoc format
+                                             :time-base
+                                             (av/->avrational (first time-base)
+                                                              (second time-base)))
 
-                          ;; do not share time base
-                          ;; with format.
-                          time-base (av/->avrational (first time-base)
-                                                     (second time-base))
-                          frames (sequence
-                                  (comp (filter (fn [packet]
-                                                  (= (:stream_index packet)
-                                                     stream-index)))
-                                        (insert-last nil)
-                                        (av/decode-frame decoder-context)
-                                        (map (fn [frame]
-                                               (doto frame
-                                                 (.writeField "time_base"
-                                                              time-base)))))
-                                  packets)]
-                      (->FrameSource frames format)))))
-            streams))))
+                               ;; do not share time base
+                               ;; with format.
+                               time-base (av/->avrational (first time-base)
+                                                          (second time-base))
+                               frames (sequence
+                                       (comp (filter (fn [packet]
+                                                       (= (:stream_index packet)
+                                                          stream-index)))
+                                             (insert-last nil)
+                                             (av/decode-frame decoder-context)
+                                             (map (fn [frame]
+                                                    (doto frame
+                                                      (.writeField "time_base"
+                                                                   time-base)))))
+                                       packets)]
+                           (->FrameSource frames format))))))))))
 
 (defn audio-pts []
   (comp
