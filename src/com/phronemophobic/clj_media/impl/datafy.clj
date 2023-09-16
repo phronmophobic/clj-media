@@ -390,27 +390,33 @@
   (datafy [params]
     (let [media-type
           (condp = (:codec_type params)
-            AVMEDIA_TYPE_VIDEO :media-type/video
-            AVMEDIA_TYPE_AUDIO :media-type/audio)
+            AVMEDIA_TYPE_UNKNOWN    :media-type/unknown
+            AVMEDIA_TYPE_VIDEO      :media-type/video
+            AVMEDIA_TYPE_AUDIO      :media-type/audio
+            AVMEDIA_TYPE_DATA       :media-type/data
+            AVMEDIA_TYPE_SUBTITLE   :media-type/subtitle
+            AVMEDIA_TYPE_ATTACHMENT :media-type/attachment
+            AVMEDIA_TYPE_NB         :media-type/nb)
           codec (avcodec_find_decoder (:codec_id params))]
-      (merge
-       {:media-type media-type
-        :codec (d/datafy codec)
-        :bit-rate (:bit_rate params)
-        :bits-per-coded-sample (:bits_per_coded_sample params)
-        :bits-per-raw-sample (:bits_per_raw_sample params)}
-       (case media-type
-         :media-type/audio
-         {:ch-layout (d/datafy (:ch_layout params))
-          :sample-rate (:sample_rate params)
-          :frame-size (:frame_size params)
-          :sample-format (sample-format->kw (:format params))}
-         :media-type/video
-         {:width (:width params)
-          :height (:height params)
-          :video-delay (:video_delay params)
-          :pixel-format (pixel-format->kw (:format params))})))))
-
+      (if (#{:media-type/unknown :media-type/data :media-type/attachment :media-type/nb} media-type)
+        {:media-type media-type}
+        (merge
+         {:media-type media-type
+          :codec (d/datafy codec)
+          :bit-rate (:bit_rate params)
+          :bits-per-coded-sample (:bits_per_coded_sample params)
+          :bits-per-raw-sample (:bits_per_raw_sample params)}
+         (case media-type
+           :media-type/audio
+           {:ch-layout (d/datafy (:ch_layout params))
+            :sample-rate (:sample_rate params)
+            :frame-size (:frame_size params)
+            :sample-format (sample-format->kw (:format params))}
+           :media-type/video
+           {:width (:width params)
+            :height (:height params)
+            :video-delay (:video_delay params)
+            :pixel-format (pixel-format->kw (:format params))}))))))
 
 (defn ->avrational [num den]
   (doto (AVRational.)
