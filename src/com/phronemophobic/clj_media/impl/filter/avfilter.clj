@@ -5,6 +5,7 @@
              :as fm]
             [clojure.string :as str]
             [clojure.datafy :as d]
+            [net.cgrand.xforms :as x]
             [com.phronemophobic.clj-media.impl.datafy
              :refer [set-filter-context-options
                      supported-filter-option?
@@ -38,288 +39,395 @@
 
 
 (defn video-filter [input-formats filter-name opts]
-  (fn [rf]
-    (let [filter-graph (avfilter_graph_alloc)
+  (let [filter-graph (avfilter_graph_alloc)
+        _ (when (nil? filter-graph)
+            (throw (Exception. "Failed to create filter graph")))
+        _ (let [ptr (.getPointer filter-graph)]
+            (.register av/cleaner filter-graph
+                       (fn []
+                         (avfilter_graph_free
+                          (PointerByReference. ptr)))))
 
-          input-contexts
-          (into []
-                (map (fn [input-format]
-                       (let [buffer (avfilter_get_by_name "buffer")
-                               _ (when (nil? buffer)
-                                   (throw (Exception.)))
-                               buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
-                               time-base (:time-base input-format)
-                               args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
-                                            (:width input-format)
-                                            (:height input-format)
-                                            (:pixel-format input-format)
-                                            (:num time-base)
-                                            (:den time-base))
+        input-contexts
+        (into []
+              (map (fn [input-format]
+                     (let [buffer (avfilter_get_by_name "buffer")
+                           _ (when (nil? buffer)
+                               (throw (Exception.)))
+                           buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
+                           time-base (:time-base input-format)
+                           args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
+                                        (:width input-format)
+                                        (:height input-format)
+                                        (:pixel-format input-format)
+                                        (:num time-base)
+                                        (:den time-base))
 
-                               err (avfilter_init_str buffer-context args)
-                               _ (when (not (zero? err))
-                                   (throw (Exception.)))]
-                         buffer-context)))
-                input-formats)
+                           err (avfilter_init_str buffer-context args)
+                           _ (when (not (zero? err))
+                               (throw (Exception.)))]
+                       buffer-context)))
+              input-formats)
 
-          buffersink (avfilter_get_by_name "buffersink")
-          _ (when (nil? buffersink)
-              (throw (Exception.)))
-          buffersink-context* (PointerByReference.)
-          _ (avfilter_graph_create_filter buffersink-context*
-                                          buffersink
-                                          nil
-                                          nil
-                                          nil
-                                          filter-graph)
+        buffersink (avfilter_get_by_name "buffersink")
+        _ (when (nil? buffersink)
+            (throw (Exception.)))
+        buffersink-context* (PointerByReference.)
+        _ (avfilter_graph_create_filter buffersink-context*
+                                        buffersink
+                                        nil
+                                        nil
+                                        nil
+                                        filter-graph)
 
-          buffersink-context (.getValue buffersink-context*)
+        buffersink-context (.getValue buffersink-context*)
 
-          pix-fmts (doto (IntByReference.)
-                     (.setValue (:pixel-format (first input-formats))))
-          _ (av_opt_set_bin buffersink-context "pix_fmts"
-                            pix-fmts
-                            (* 1 4)
-                            AV_OPT_SEARCH_CHILDREN)
+        pix-fmts (doto (IntByReference.)
+                   (.setValue (:pixel-format (first input-formats))))
+        _ (av_opt_set_bin buffersink-context "pix_fmts"
+                          pix-fmts
+                          (* 1 4)
+                          AV_OPT_SEARCH_CHILDREN)
 
-          ;; create the filter
-          filter-context (avfilter_graph_alloc_filter
-                          filter-graph
-                          (avfilter_get_by_name filter-name)
-                          nil)
-          _ (assert filter-context)
-          _ (set-filter-context-options filter-context filter-name opts)
+        ;; create the filter
+        filter-context (avfilter_graph_alloc_filter
+                        filter-graph
+                        (avfilter_get_by_name filter-name)
+                        nil)
+        _ (assert filter-context)
+        _ (set-filter-context-options filter-context filter-name opts)
 
-          _ (avfilter_init_str filter-context nil)
+        _ (avfilter_init_str filter-context nil)
 
-          _ (doseq [[i input-context] (map-indexed vector input-contexts)]
-              (let [err (avfilter_link input-context 0
-                                       filter-context i)]
-                (when (not (zero? err))
-                  (throw (Exception.)))))
+        _ (doseq [[i input-context] (map-indexed vector input-contexts)]
+            (let [err (avfilter_link input-context 0
+                                     filter-context i)]
+              (when (not (zero? err))
+                (throw (Exception.)))))
 
-          err (avfilter_link filter-context 0
-                             buffersink-context 0)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
+        err (avfilter_link filter-context 0
+                           buffersink-context 0)
+        _ (when (not (zero? err))
+            (throw (Exception.)))
 
-          err (avfilter_graph_config filter-graph nil)
+        err (avfilter_graph_config filter-graph nil)
+        _ (when (not (>= err 0))
+            (throw (Exception.)))
 
-          filter-graph* (doto (PointerByReference.)
-                          (.setValue (.getPointer filter-graph)))
-          filter-graph-ref (volatile! filter-graph)]
-      (.register av/cleaner filter-graph
-                 (fn []
-                   (avfilter_graph_free filter-graph*)))
-      (.register av/cleaner buffersink-context
-                 (fn []
-                   (vreset! filter-graph-ref nil)))
-      (when (not (>= err 0))
-        (throw (Exception.)))
-      (fn
-        ([]
-         (rf))
-        ([result]
-         ;; flush
-         (doseq [buffer-context input-contexts]
-           (av_buffersrc_write_frame buffer-context nil))
-         (let [result
-               (loop [result result]
-                 (let [frame (av/new-frame)
-                       err (av_buffersink_get_frame_flags buffersink-context
-                                                          frame
-                                                          0)]
-                   (cond
-                     (zero? err)
-                     (let [result (rf result frame) ]
-                       (if (reduced? result)
-                         result
-                         (recur result)))
+        filter-graph* (doto (PointerByReference.)
+                        (.setValue (.getPointer filter-graph)))
+        filter-graph-ref (volatile! filter-graph)
+        ;; hold reference to filter graph
+        ;; so that it's not cleaned before
+        ;; we're done.
+        _ (.register av/cleaner buffersink-context
+                     (fn []
+                       (vreset! filter-graph-ref nil)))
 
-                     (av/eagain? err)
-                     result
+        time-base (av_buffersink_get_time_base buffersink-context)
+        output-format
+        {:width (av_buffersink_get_w buffersink-context)
+         :height (av_buffersink_get_h buffersink-context)
+         ;; copy. time bases known to mutate in place
+         :time-base (av/->avrational (:num time-base)
+                          (:den time-base))
+         :pixel-format (av_buffersink_get_format buffersink-context)
+         :media-type :media-type/video}]
 
-                     (av/eof? err)
-                     result
-                     ;; (reduced result)
+    {:output-format output-format
+     :xform
+     (fn [rf]
 
-                     :else
-                     (reduced {:error-code err
-                               :error-msg (av/error->str err)
-                               :type :transcode-error}))))]
-           (rf result)))
-        ([result [input-idx input-frame]]
-         (let [buffer-context (nth input-contexts input-idx)]
-           (av_buffersrc_write_frame buffer-context
-                                     input-frame))
-         (loop [result result]
-           (let [frame (av/new-frame)
-                 ;; TODO: check av_buffersink_get* to
-                 ;;       to check format types
-                 err (av_buffersink_get_frame_flags buffersink-context
-                                                    frame
-                                                    0)]
-             (cond
-               (zero? err)
-               (let [result (rf result frame) ]
-                 (if (reduced? result)
-                   result
-                   (recur result)))
+       (fn
+         ([]
+          (rf))
+         ([result]
+          ;; flush
+          (doseq [buffer-context input-contexts]
+            (av_buffersrc_write_frame buffer-context nil))
+          (let [result
+                (loop [result result]
+                  (let [frame (av/new-frame)
+                        err (av_buffersink_get_frame_flags buffersink-context
+                                                           frame
+                                                           0)]
+                    (cond
+                      (zero? err)
+                      (let [result (rf result frame) ]
+                        (if (reduced? result)
+                          result
+                          (recur result)))
 
-               (av/eagain? err)
-               result
+                      (av/eagain? err)
+                      result
 
-               (av/eof? err)
-               (reduced result)
+                      (av/eof? err)
+                      result
+                      ;; (reduced result)
 
-               :else
-               (reduced {:error-code err
-                         :error-msg (av/error->str err)
-                         :type :transcode-error}))))))))
+                      :else
+                      (reduced {:error-code err
+                                :error-msg (av/error->str err)
+                                :type :transcode-error}))))]
+            (rf result)))
+         ([result [input-idx input-frame]]
+          (let [buffer-context (nth input-contexts input-idx)]
+            (av_buffersrc_write_frame buffer-context
+                                      input-frame))
+          (loop [result result]
+            (let [frame (av/new-frame)
+                  ;; TODO: check av_buffersink_get* to
+                  ;;       to check format types
+                  err (av_buffersink_get_frame_flags buffersink-context
+                                                     frame
+                                                     0)]
+              (cond
+                (zero? err)
+                (let [result (rf result frame) ]
+                  (if (reduced? result)
+                    result
+                    (recur result)))
+
+                (av/eagain? err)
+                result
+
+                (av/eof? err)
+                (reduced result)
+
+                :else
+                (reduced {:error-code err
+                          :error-msg (av/error->str err)
+                          :type :transcode-error})))))))})
   )
 
 (defn audio-filter [input-formats filter-name opts]
-  (fn [rf]
-    (let [filter-graph (avfilter_graph_alloc)
+  (let [filter-graph (avfilter_graph_alloc)
+        _ (let [ptr (.getPointer filter-graph)]
+            (.register av/cleaner filter-graph
+                       (fn []
+                         (avfilter_graph_free
+                          (PointerByReference. ptr)))))
 
-          input-contexts
-          (into []
-                (map (fn [input-format]
-                       (let [buffer (avfilter_get_by_name "abuffer")
-                             _ (when (nil? buffer)
-                                 (throw (Exception.)))
-                             buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
 
-                             args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
-                                          (datafy-media/ch-layout->str
-                                           (:ch-layout input-format ))
-                                          (:sample-format input-format)
-                                          (:sample-rate input-format))
+        input-contexts
+        (into []
+              (map (fn [input-format]
+                     (let [buffer (avfilter_get_by_name "abuffer")
+                           _ (when (nil? buffer)
+                               (throw (Exception.)))
+                           buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
 
-                             err (avfilter_init_str buffer-context args)
-                             _ (when (not (zero? err))
-                                 (throw (Exception.)))]
-                         buffer-context)))
-                input-formats)
+                           args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
+                                        (datafy-media/ch-layout->str
+                                         (:ch-layout input-format ))
+                                        (:sample-format input-format)
+                                        (:sample-rate input-format))
 
-          buffersink (avfilter_get_by_name "abuffersink")
-          _ (when (nil? buffersink)
-              (throw (Exception.)))
-          buffersink-context* (PointerByReference.)
-          _ (avfilter_graph_create_filter buffersink-context*
-                                          buffersink
-                                          nil
-                                          nil
-                                          nil
-                                          filter-graph)
+                           err (avfilter_init_str buffer-context args)
+                           _ (when (not (zero? err))
+                               (throw (Exception.)))]
+                       buffer-context)))
+              input-formats)
 
-          buffersink-context (.getValue buffersink-context*)
+        buffersink (avfilter_get_by_name "abuffersink")
+        _ (when (nil? buffersink)
+            (throw (Exception.)))
+        buffersink-context* (PointerByReference.)
+        _ (avfilter_graph_create_filter buffersink-context*
+                                        buffersink
+                                        nil
+                                        nil
+                                        nil
+                                        filter-graph)
 
-          sample-fmts (doto (IntByReference.)
-                        (.setValue (:sample-format (first input-formats))))
-          _ (av_opt_set_bin buffersink-context "sample_fmts"
-                            sample-fmts
-                            (* 1 4)
-                            AV_OPT_SEARCH_CHILDREN)
+        buffersink-context (.getValue buffersink-context*)
 
-          ;; create the filter
-          filter-context (avfilter_graph_alloc_filter
-                          filter-graph
-                          (avfilter_get_by_name filter-name)
-                          nil)
-          _ (assert filter-context)
-          _ (set-filter-context-options filter-context filter-name opts)
+        sample-fmts (doto (IntByReference.)
+                      (.setValue (:sample-format (first input-formats))))
+        _ (av_opt_set_bin buffersink-context "sample_fmts"
+                          sample-fmts
+                          (* 1 4)
+                          AV_OPT_SEARCH_CHILDREN)
 
-          _ (avfilter_init_str filter-context nil)
+        ;; create the filter
+        filter-context (avfilter_graph_alloc_filter
+                        filter-graph
+                        (avfilter_get_by_name filter-name)
+                        nil)
+        _ (assert filter-context)
+        _ (set-filter-context-options filter-context filter-name opts)
 
-          _ (doseq [[i input-context] (map-indexed vector input-contexts)]
-              (let [err (avfilter_link input-context 0
-                                       filter-context i)]
-                (when (not (zero? err))
-                  (throw (Exception.)))))
+        _ (avfilter_init_str filter-context nil)
 
-          err (avfilter_link filter-context 0
-                             buffersink-context 0)
-          _ (when (not (zero? err))
-              (throw (Exception.)))
+        _ (doseq [[i input-context] (map-indexed vector input-contexts)]
+            (let [err (avfilter_link input-context 0
+                                     filter-context i)]
+              (when (not (zero? err))
+                (throw (Exception.)))))
 
-          err (avfilter_graph_config filter-graph nil)
+        err (avfilter_link filter-context 0
+                           buffersink-context 0)
+        _ (when (not (zero? err))
+            (throw (Exception.)))
 
-          filter-graph* (doto (PointerByReference.)
-                          (.setValue (.getPointer filter-graph)))
-          filter-graph-ref (volatile! filter-graph)]
-      (.register av/cleaner filter-graph
-                 (fn []
-                   (avfilter_graph_free filter-graph*)))
-      (.register av/cleaner buffersink-context
-                 (fn []
-                   (vreset! filter-graph-ref nil)))
-      (when (not (>= err 0))
-        (throw (Exception.)))
-      (fn
-        ([]
-         (rf))
-        ([result]
-         ;; flush
-         (doseq [buffer-context input-contexts]
-           (av_buffersrc_write_frame buffer-context nil))
-         (let [result
-               (loop [result result]
-                 (let [frame (av/new-frame)
-                       err (av_buffersink_get_frame_flags buffersink-context
-                                                          frame
-                                                          0)]
-                   (cond
-                     (zero? err)
-                     (let [result (rf result frame) ]
-                       (if (reduced? result)
-                         result
-                         (recur result)))
+        err (avfilter_graph_config filter-graph nil)
+        _ (when (not (>= err 0))
+            (throw (Exception.)))
+        filter-graph-ref (volatile! filter-graph)
+        _ (.register av/cleaner buffersink-context
+                     (fn []
+                       (vreset! filter-graph-ref nil)))
 
-                     (av/eagain? err)
-                     result
+        time-base (av_buffersink_get_time_base buffersink-context)
+        ch-layout (AVChannelLayoutByReference.)
+        _ (av_channel_layout_copy (.getPointer ch-layout)
+                                  (.getPointer (:ch-layout (first input-formats))))
+        output-format
+        {:sample-rate (av_buffersink_get_sample_rate buffersink-context)
+         :sample-format (av_buffersink_get_format buffersink-context)
+         ;; assume channel layout doesn't change
+         :ch-layout ch-layout
+         ;; copy structs. known to mutate in place
+         :time-base (av/->avrational (:num time-base)
+                                     (:den time-base))
+         :media-type :media-type/audio}]
 
-                     (av/eof? err)
-                     result
-                     ;; (reduced result)
 
-                     :else
-                     (reduced {:error-code err
-                               :error-msg (av/error->str err)
-                               :type :transcode-error}))))]
-           (rf result)))
-        ([result [input-index input-frame]]
-         (let [buffer-context (nth input-contexts input-index)]
-           (av_buffersrc_write_frame buffer-context
-                                     input-frame))
-         (loop [result result]
-           (let [frame (av/new-frame)
-                 ;; TODO: check av_buffersink_get* to
-                 ;;       to check format types
-                 err (av_buffersink_get_frame_flags buffersink-context
-                                                    frame
-                                                    0)]
-             (cond
-               (zero? err)
-               (let [result (rf result frame) ]
-                 (if (reduced? result)
-                   result
-                   (recur result)))
+    {:output-format output-format
+     :xform
+     (fn [rf]
+       (fn
+         ([]
+          (rf))
+         ([result]
+          ;; flush
+          (doseq [buffer-context input-contexts]
+            (av_buffersrc_write_frame buffer-context nil))
+          (let [result
+                (loop [result result]
+                  (let [frame (av/new-frame)
+                        err (av_buffersink_get_frame_flags buffersink-context
+                                                           frame
+                                                           0)]
+                    (cond
+                      (zero? err)
+                      (let [result (rf result frame) ]
+                        (if (reduced? result)
+                          result
+                          (recur result)))
 
-               (av/eagain? err)
-               result
+                      (av/eagain? err)
+                      result
 
-               (av/eof? err)
-               (reduced result)
+                      (av/eof? err)
+                      result
+                      ;; (reduced result)
 
-               :else
-               (reduced {:error-code err
-                         :error-msg (av/error->str err)
-                         :type :transcode-error})))))))))
+                      :else
+                      (reduced {:error-code err
+                                :error-msg (av/error->str err)
+                                :type :transcode-error}))))]
+            (rf result)))
+         ([result [input-index input-frame]]
+          (let [buffer-context (nth input-contexts input-index)]
+            (av_buffersrc_write_frame buffer-context
+                                      input-frame))
+          (loop [result result]
+            (let [frame (av/new-frame)
+                  ;; TODO: check av_buffersink_get* to
+                  ;;       to check format types
+                  err (av_buffersink_get_frame_flags buffersink-context
+                                                     frame
+                                                     0)]
+              (cond
+                (zero? err)
+                (let [result (rf result frame) ]
+                  (if (reduced? result)
+                    result
+                    (recur result)))
+
+                (av/eagain? err)
+                result
+
+                (av/eof? err)
+                (reduced result)
+
+                :else
+                (reduced {:error-code err
+                          :error-msg (av/error->str err)
+                          :type :transcode-error})))))))}))
 
 
 (defrecord AVFilterMedia [filter-name opts media-type media]
+  fm/IComputeNode
+  (configure! [this input-ports]
+    (let [matches-media-type?
+          (fn [port]
+            (= media-type
+               (-> port :format :media-type)))
+
+          unfiltered-ports
+          (into []
+                (remove matches-media-type?)
+                input-ports)
+
+          filtered-port-info
+          (into []
+                (comp
+                 (filter matches-media-type?)
+                 (map (fn [port]
+                        (let [f (case media-type
+                                  :media-type/audio audio-filter
+                                  :media-type/video video-filter)
+
+                              port-id [this
+                                       (:id port)]
+
+                              {:keys [output-format
+                                      xform]}
+                              (f [(:format port)] filter-name opts)
+
+                              xf (comp (map (fn [frame]
+                                              [0 frame]))
+                                       ;; signal EOF
+                                       ;; prevents extra buffering for some filters
+                                       (insert-last [0 nil])
+                                       xform)
+
+
+                              rf (xf
+                                  (fn sub
+                                    ([send]
+                                     (sub send nil)
+                                     (send port-id))
+                                    ([send frame]
+                                     (send port-id frame)
+                                     ;; always return send
+                                     send)))
+
+                              subscriptions
+                              {(:id port) rf}]
+                          {:subscriptions subscriptions
+                           :port {:id port-id
+                                  :format output-format}}))))
+                input-ports)]
+      {:subscriptions
+       (transduce (map :subscriptions)
+                  merge
+                  {}
+                  filtered-port-info)
+       :ports
+       (into []
+             cat
+             [unfiltered-ports
+              (eduction
+               (map :port)
+               filtered-port-info)])})
+
+    )
   fm/IMediaSource
+  (-media-inputs [this]
+    [media])
   (-media [this]
     (mapv (fn [src]
             (let [input-format (fm/-format src)]
@@ -327,13 +435,16 @@
                 (let [f (case media-type
                           :media-type/audio audio-filter
                           :media-type/video video-filter)
+                      {:keys [xform]}
+                      (f [input-format] filter-name opts)
+
                       frames (sequence
                               (comp (map (fn [frame]
                                            [0 frame]))
                                     ;; signal EOF
                                     ;; prevents extra buffering for some filters
                                     (insert-last [0 nil])
-                                    (f [input-format] filter-name opts))
+                                    xform)
                               (fm/-frames src))
                       first-frame (first frames)
                       output-format
@@ -348,9 +459,11 @@
                                :width (:width first-frame)
                                :height (:height first-frame)
                                :pixel-format (:format first-frame)))]
-                  (fm/->FrameSource
+                  (fm/frame-source
                    frames
-                   output-format))
+                   output-format
+                   [src]
+                   filter-name))
                 ;; else, don't change
                 src)))
           (fm/-media media)))
@@ -358,7 +471,95 @@
 
 
 (defrecord AVMultiFilterMedia [filter-name opts media-type medias]
+  fm/IComputeNode
+  (configure! [this input-ports]
+    (let [matches-media-type? (fn [port]
+                                (= media-type
+                                   (-> port :format :media-type)))
+          unfiltered-ports
+          (into []
+                (remove matches-media-type?)
+                input-ports)
+
+          filter-input-ports
+          (into []
+                (filter matches-media-type?)
+                input-ports)
+
+          ;; input ports not guaranteed to be sorted
+          media-indexes
+          (into {}
+                (map-indexed (fn [i media]
+                               [media i]))
+                medias)
+          filter-input-ports (sort-by (fn [port]
+                                        (assert (media-indexes
+                                                 (:media port)))
+                                        (media-indexes
+                                         (:media port)))
+                                      filter-input-ports)
+
+          _ (when (some #(not= 1 %)
+                        (->> filter-input-ports
+                             (map :media)
+                             frequencies
+                             (map second)))
+              (throw (ex-info (str "Filter " filter-name " expects all input media to have exactly one media of type " media-type)
+                              {:filter this})))
+
+          make-filter (case media-type
+                        :media-type/audio audio-filter
+                        :media-type/video video-filter)
+
+          filter-input-port-id [this :input
+                                (into []
+                                      (map :id)
+                                      filter-input-ports)]
+          filter-output-port-id [this :output
+                                 (into []
+                                       (map :id)
+                                       filter-input-ports)]
+
+          input-formats (into []
+                              (map :format)
+                              filter-input-ports)
+          {:keys [xform
+                  output-format]}
+          (make-filter input-formats
+                          filter-name
+                          opts)
+
+          rf (xform
+              (fn sub
+                ([send]
+                 (send filter-output-port-id))
+                ([send frame]
+                 (send filter-output-port-id frame)
+                 send)))
+
+          subscriptions
+          (into
+           {filter-input-port-id rf}
+           (comp (map-indexed
+                  (fn [i port]
+                    [(:id port)
+                     (fn sub
+                       ([send]
+                        (sub send nil)
+                        (send filter-input-port-id))
+                       ([send frame]
+                        (send filter-input-port-id [i frame])))])))
+           filter-input-ports)]
+      {:ports
+       (into [{:id filter-output-port-id
+               :format output-format}]
+             unfiltered-ports)
+       :subscriptions subscriptions}))
+
   fm/IMediaSource
+  (-media-inputs [this]
+    medias)
+
   (-media [this]
     (let [matches-media-type? #(= media-type
                                   (:media-type (fm/-format %)))
@@ -384,9 +585,10 @@
                         :media-type/audio audio-filter
                         :media-type/video video-filter)
           filter-input-formats (mapv fm/-format filter-inputs)
+          {:keys [xform]} (make-filter filter-input-formats filter-name opts)
 
           frames (sequence
-                  (make-filter filter-input-formats filter-name opts)
+                  xform
                   (apply
                    interleave-all
                    (sequence
@@ -409,233 +611,376 @@
                    :width (:width first-frame)
                    :height (:height first-frame)
                    :pixel-format (:format first-frame)))
-          filtered-output (fm/->FrameSource frames
-                                            output-format)]
+          filtered-output (fm/frame-source frames
+                                           output-format
+                                           filter-inputs
+                                           filter-name)]
       (conj unfiltered-outputs filtered-output))))
 
 
 (defn concat-filter [input-formats opts]
-  (fn [rf]
-    (let [filter-graph (avfilter_graph_alloc)
-
-          input-contexts
-          (into []
-                (map (fn [input-format]
-                       (case (:media-type input-format)
-                         :media-type/audio
-                         (let [buffer (avfilter_get_by_name "abuffer")
-                               _ (when (nil? buffer)
-                                   (throw (Exception.)))
-                               buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
-
-                               args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
-                                            (datafy-media/ch-layout->str
-                                             (:ch-layout input-format ))
-                                            (:sample-format input-format)
-                                            (:sample-rate input-format))
-
-                               err (avfilter_init_str buffer-context args)
-                               _ (when (not (zero? err))
-                                   (throw (Exception.)))]
-                           buffer-context)
-
-                         :media-type/video
-                         (let [buffer (avfilter_get_by_name "buffer")
-                               _ (when (nil? buffer)
-                                   (throw (Exception.)))
-                               buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
-                               time-base (:time-base input-format)
-                               args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
-                                            (:width input-format)
-                                            (:height input-format)
-                                            (:pixel-format input-format)
-                                            (:num time-base)
-                                            (:den time-base))
-
-                               err (avfilter_init_str buffer-context args)
-                               _ (when (not (zero? err))
-                                   (throw (Exception.)))]
-                           buffer-context))))
-                input-formats)
-
-          output-contexts
-          (into []
-                (map (fn [input-format]
-                       (case (:media-type input-format)
-                         :media-type/audio
-                         (let [buffersink (avfilter_get_by_name "abuffersink")
-                               _ (when (nil? buffersink)
-                                   (throw (Exception.)))
-                               buffersink-context* (PointerByReference.)
-                               _ (avfilter_graph_create_filter buffersink-context*
-                                                               buffersink
-                                                               nil
-                                                               nil
-                                                               nil
-                                                               filter-graph)
-
-                               buffersink-context (.getValue buffersink-context*)
-
-                               sample-fmts (doto (IntByReference.)
-                                             (.setValue (:sample-format input-format)))
-                               _ (av_opt_set_bin buffersink-context "sample_fmts"
-                                                 sample-fmts
-                                                 (* 1 4)
-                                                 AV_OPT_SEARCH_CHILDREN)]
-                           buffersink-context)
-
-                         :media-type/video
-                         (let [buffersink (avfilter_get_by_name "buffersink")
-                               _ (when (nil? buffersink)
-                                   (throw (Exception.)))
-                               buffersink-context* (PointerByReference.)
-                               _ (avfilter_graph_create_filter buffersink-context*
-                                                               buffersink
-                                                               nil
-                                                               nil
-                                                               nil
-                                                               filter-graph)
-
-                               buffersink-context (.getValue buffersink-context*)
-
-                               pix-fmts (doto (IntByReference.)
-                                          (.setValue (:pixel-format input-format)))
-                               _ (av_opt_set_bin buffersink-context "pix_fmts"
-                                                 pix-fmts
-                                                 (* 1 4)
-                                                 AV_OPT_SEARCH_CHILDREN)]
-                           buffersink-context))))
-                (take (+ (:v opts) (:a opts)) input-formats))
-
-          ;; create the filter
-          filter-name "concat"
-          filter-context (avfilter_graph_alloc_filter
-                          filter-graph
-                          (avfilter_get_by_name filter-name)
-                          nil)
-          _ (assert filter-context)
-          _ (set-filter-context-options filter-context filter-name opts)
-
-          _ (avfilter_init_str filter-context nil)
-
-          _ (doseq [[i input-context] (map-indexed vector input-contexts)]
-              (let [err (avfilter_link input-context 0
-                                       filter-context i)]
-                (when (not (zero? err))
-                  (throw (Exception.)))))
-
-          _ (doseq [[i output-context] (map-indexed vector output-contexts)]
-              (let [err (avfilter_link filter-context i
-                                       output-context 0)]
-                (when (not (zero? err))
-                  (throw (Exception.)))))
+  (let [filter-graph (avfilter_graph_alloc)
+        _ (when (nil? filter-graph)
+            (throw (Exception. "Failed to create filter graph")))
+        _ (let [ptr (.getPointer filter-graph)]
+            (.register av/cleaner filter-graph
+                       (fn []
+                         (avfilter_graph_free
+                          (PointerByReference. ptr)))))
 
 
-          err (avfilter_graph_config filter-graph nil)
+        input-contexts
+        (into []
+              (map (fn [input-format]
+                     (case (:media-type input-format)
+                       :media-type/audio
+                       (let [buffer (avfilter_get_by_name "abuffer")
+                             _ (when (nil? buffer)
+                                 (throw (Exception.)))
+                             buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
 
-          time-bases
-          (into {}
-                (map (fn [output-context]
-                       (let [time-base (av_buffersink_get_time_base output-context)]
-                         [output-context time-base])))
-                output-contexts)
+                             args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
+                                          (datafy-media/ch-layout->str
+                                           (:ch-layout input-format ))
+                                          (:sample-format input-format)
+                                          (:sample-rate input-format))
 
-          filter-graph* (doto (PointerByReference.)
-                          (.setValue (.getPointer filter-graph)))
-          ]
-      (.register av/cleaner filter-graph
-                 (fn []
-                   (avfilter_graph_free filter-graph*)))
-      (doseq [output-context output-contexts]
-        (let [filter-graph-ref (volatile! filter-graph)]
-          (.register av/cleaner output-context
-                     (fn []
-                       (vreset! filter-graph-ref nil)))))
-      (when (not (>= err 0))
-        (throw (Exception.)))
-      (fn
-        ([]
-         (rf))
-        ([result]
-         (rf result)
-         ;; flush
-         (doseq [buffer-context input-contexts]
-           (av_buffersrc_write_frame buffer-context nil))
-         (let [result
-               (reduce
-                (fn [result [i output-context]]
-                  (loop [result result]
-                    (let [frame (av/new-frame)
-                          err (av_buffersink_get_frame_flags output-context
-                                                             frame
-                                                             0)]
-                      (cond
-                        (zero? err)
-                        (let [time-base (get time-bases output-context)
-                              frame (doto frame
-                                      (.writeField "pts"
-                                                   (av_rescale_q (:pts frame)
-                                                                 time-base
-                                                                 (:time-base (nth input-formats i)))))
-                              result (rf result [i frame])]
-                          (if (reduced? result)
-                            result
-                            (recur result)))
+                             err (avfilter_init_str buffer-context args)
+                             _ (when (not (zero? err))
+                                 (throw (Exception.)))]
+                         buffer-context)
 
-                        (av/eagain? err)
-                        result
+                       :media-type/video
+                       (let [buffer (avfilter_get_by_name "buffer")
+                             _ (when (nil? buffer)
+                                 (throw (Exception.)))
+                             buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
+                             time-base (:time-base input-format)
+                             args (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
+                                          (:width input-format)
+                                          (:height input-format)
+                                          (:pixel-format input-format)
+                                          (:num time-base)
+                                          (:den time-base))
 
-                        (av/eof? err)
-                        result
+                             err (avfilter_init_str buffer-context args)
+                             _ (when (not (zero? err))
+                                 (throw (Exception.)))]
+                         buffer-context))))
+              input-formats)
 
-                        :else
-                        (reduced {:error-code err
-                                  :error-msg (av/error->str err)
-                                  :type :transcode-error})))))
-                result
-                (map-indexed vector output-contexts))]
-           (rf result))
-         )
-        ([result [input-idx input-frame]]
-         (let [buffer-context (nth input-contexts input-idx)]
-           (av_buffersrc_write_frame buffer-context
-                                     input-frame))
-         (reduce
-          (fn [result [i output-context]]
-            (loop [result result]
-              (let [frame (av/new-frame)
-                    err (av_buffersink_get_frame_flags output-context
-                                                       frame
-                                                       0)]
-                (cond
-                  (zero? err)
-                  (let [time-base (get time-bases output-context)
-                        frame (doto frame
-                                (.writeField "pts"
-                                             (av_rescale_q (:pts frame)
-                                                           time-base
-                                                           (:time-base (nth input-formats i)))))
-                        result (rf result [i frame])]
-                    (if (reduced? result)
-                      result
-                      (recur result)))
+        output-contexts
+        (into []
+              (map (fn [input-format]
+                     (case (:media-type input-format)
+                       :media-type/audio
+                       (let [buffersink (avfilter_get_by_name "abuffersink")
+                             _ (when (nil? buffersink)
+                                 (throw (Exception.)))
+                             buffersink-context* (PointerByReference.)
+                             _ (avfilter_graph_create_filter buffersink-context*
+                                                             buffersink
+                                                             nil
+                                                             nil
+                                                             nil
+                                                             filter-graph)
 
-                  (av/eagain? err)
-                  result
+                             buffersink-context (.getValue buffersink-context*)
 
-                  (av/eof? err)
-                  result
+                             sample-fmts (doto (IntByReference.)
+                                           (.setValue (:sample-format input-format)))
+                             _ (av_opt_set_bin buffersink-context "sample_fmts"
+                                               sample-fmts
+                                               (* 1 4)
+                                               AV_OPT_SEARCH_CHILDREN)]
+                         buffersink-context)
 
-                  :else
-                  (reduced {:error-code err
-                            :error-msg (av/error->str err)
-                            :type :transcode-error})))))
-          result
-          (map-indexed vector output-contexts)))))))
+                       :media-type/video
+                       (let [buffersink (avfilter_get_by_name "buffersink")
+                             _ (when (nil? buffersink)
+                                 (throw (Exception.)))
+                             buffersink-context* (PointerByReference.)
+                             _ (avfilter_graph_create_filter buffersink-context*
+                                                             buffersink
+                                                             nil
+                                                             nil
+                                                             nil
+                                                             filter-graph)
+
+                             buffersink-context (.getValue buffersink-context*)
+
+                             pix-fmts (doto (IntByReference.)
+                                        (.setValue (:pixel-format input-format)))
+                             _ (av_opt_set_bin buffersink-context "pix_fmts"
+                                               pix-fmts
+                                               (* 1 4)
+                                               AV_OPT_SEARCH_CHILDREN)]
+                         buffersink-context))))
+              (take (+ (:v opts) (:a opts)) input-formats))
+
+        ;; create the filter
+        filter-name "concat"
+        filter-context (avfilter_graph_alloc_filter
+                        filter-graph
+                        (avfilter_get_by_name filter-name)
+                        nil)
+        _ (assert filter-context)
+        _ (set-filter-context-options filter-context filter-name opts)
+
+        _ (avfilter_init_str filter-context nil)
+
+        _ (doseq [[i input-context] (map-indexed vector input-contexts)]
+            (let [err (avfilter_link input-context 0
+                                     filter-context i)]
+              (when (not (zero? err))
+                (throw (Exception.)))))
+
+        _ (doseq [[i output-context] (map-indexed vector output-contexts)]
+            (let [err (avfilter_link filter-context i
+                                     output-context 0)]
+              (when (not (zero? err))
+                (throw (Exception.)))))
+
+
+        err (avfilter_graph_config filter-graph nil)
+        _ (when (not (>= err 0))
+            (throw (Exception.)))
+
+        _ (doseq [output-context output-contexts]
+            (let [filter-graph-ref (volatile! filter-graph)]
+              (.register av/cleaner output-context
+                         (fn []
+                           (vreset! filter-graph-ref nil)))))
+
+        output-formats
+        (into []
+              (map-indexed
+               (fn [i buffersink-context]
+                 (let [time-base (av_buffersink_get_time_base buffersink-context)
+                       type (av_buffersink_get_type buffersink-context)
+
+                       output-format
+                       (merge
+                        {:time-base (av/->avrational (:num time-base)
+                                                     (:den time-base))}
+                        (condp = type
+                          AVMEDIA_TYPE_AUDIO
+                          (let [ch-layout (AVChannelLayoutByReference.)
+                                _ (av_channel_layout_copy (.getPointer ch-layout)
+                                                          (.getPointer (:ch-layout (nth input-formats i))))]
+                            {:sample-rate (av_buffersink_get_sample_rate buffersink-context)
+                             :sample-format (av_buffersink_get_format buffersink-context)
+                             ;; assume channel layout doesn't change
+                             :ch-layout ch-layout
+                             :media-type :media-type/audio})
+
+                          AVMEDIA_TYPE_VIDEO
+                          {:width (av_buffersink_get_w buffersink-context)
+                           :height (av_buffersink_get_h buffersink-context)
+                           :pixel-format (av_buffersink_get_format buffersink-context)
+                           :media-type :media-type/video}))]
+                   output-format)))
+              output-contexts)]
+
+    {:output-formats output-formats
+     :xform
+     (fn [rf]
+       (fn
+         ([]
+          (rf))
+         ([result]
+          (rf result)
+          ;; flush
+          (doseq [buffer-context input-contexts]
+            (av_buffersrc_write_frame buffer-context nil))
+          (let [result
+                (reduce
+                 (fn [result [i output-context]]
+                   (loop [result result]
+                     (let [frame (av/new-frame)
+                           err (av_buffersink_get_frame_flags output-context
+                                                              frame
+                                                              0)]
+                       (cond
+                         (zero? err)
+                         (let [;; time-base (get time-bases output-context)
+                               ;; frame (doto frame
+                               ;;         (.writeField "pts"
+                               ;;                      (av_rescale_q (:pts frame)
+                               ;;                                    time-base
+                               ;;                                    (:time-base (nth input-formats i)))))
+                               result (rf result [i frame])]
+
+                           (if (reduced? result)
+                             result
+                             (recur result)))
+
+                         (av/eagain? err)
+                         result
+
+                         (av/eof? err)
+                         result
+
+                         :else
+                         (reduced {:error-code err
+                                   :error-msg (av/error->str err)
+                                   :type :transcode-error})))))
+                 result
+                 (map-indexed vector output-contexts))]
+            (rf result))
+          )
+         ([result [input-idx input-frame]]
+          (let [buffer-context (nth input-contexts input-idx)]
+            (av_buffersrc_write_frame buffer-context
+                                      input-frame))
+          (reduce
+           (fn [result [i output-context]]
+             (loop [result result]
+               (let [frame (av/new-frame)
+                     err (av_buffersink_get_frame_flags output-context
+                                                        frame
+                                                        0)]
+                 (cond
+                   (zero? err)
+                   (let [;; time-base (get time-bases output-context)
+                         ;; frame (doto frame
+                         ;;         (.writeField "pts"
+                         ;;                      (av_rescale_q (:pts frame)
+                         ;;                                    time-base
+                         ;;                                    (:time-base (nth input-formats i)))))
+                         result (rf result [i frame])]
+                     (if (reduced? result)
+                       result
+                       (recur result)))
+
+                   (av/eagain? err)
+                   result
+
+                   (av/eof? err)
+                   result
+
+                   :else
+                   (reduced {:error-code err
+                             :error-msg (av/error->str err)
+                             :type :transcode-error})))))
+           result
+           (map-indexed vector output-contexts)))))}))
 
 
 (defrecord AVConcatFilterMedia [opts medias]
+  fm/IComputeNode
+  (configure! [this input-ports]
+    (let [
+          port-sort-fn (fn [port]
+                           (= :media-type/audio
+                              (:media-type (:format port))))
+          media-indexes
+          (into {}
+                (map-indexed (fn [i media]
+                               [media i]))
+                medias)
+
+          partitioned-ports
+          (into []
+                (comp
+                 (x/sort-by (fn [port]
+                              (-> port
+                                  :media
+                                  media-indexes)))
+                 (x/by-key :media
+                           (comp
+                            (x/sort-by port-sort-fn)
+                            (x/into [])))
+                 (map second))
+                input-ports)
+          _ (let [fqs (into []
+                            (map (fn [ports]
+                                   (frequencies
+                                    (mapv (fn [port]
+                                            (-> port
+                                                :format
+                                                :media-type))
+                                          ports))))
+                            partitioned-ports)
+                  first-fq (first fqs)]
+              (when (not (every? #(= first-fq %)
+                                 (rest fqs)))
+                (throw (ex-info "All medias must match when concating."
+                                {:concat this}))))
+
+          input-formats
+          (into []
+                (comp cat
+                      (map :format))
+                partitioned-ports)
+
+          first-media-ports (first partitioned-ports)
+          opts
+          {:n (count input-ports)
+           :v (->> first-media-ports
+                   (filter #(= :media-type/video
+                               (-> % :format :media-type)))
+                   count)
+           :a (->> first-media-ports
+                   (filter #(= :media-type/audio
+                               (-> % :format :media-type)))
+                   count)}
+
+          filter-input-port-id [this :input]
+
+          {:keys [xform
+                  output-formats]}
+          (concat-filter input-formats opts)
+          rf (xform
+              (fn
+                ([send]
+                 ;; close all outputs
+                 (doseq [i (range (count output-formats))]
+                   (let [filter-output-port-id [this :output i]]
+                     (send filter-output-port-id))))
+                ([send [i frame]]
+                 (let [filter-output-port-id [this :output i]]
+                   (send filter-output-port-id frame))
+                 send)))
+
+
+          active-inputs (atom (into #{}
+                                    (comp cat
+                                          (map-indexed
+                                           (fn [i _]
+                                             i)))
+                                    partitioned-ports))
+          subscriptions
+          (into
+           {filter-input-port-id rf}
+           (comp cat
+                 (map-indexed
+                  (fn [i port]
+                    [(:id port)
+                     (fn sub
+                       ([send]
+                        ;; as each input ends, send a nil frame
+                        ;; once all inputs end, close filter-input-port-id.
+                        (let [remaining (swap! active-inputs disj i)]
+                          (sub send nil)
+                          (when (empty? remaining)
+                            (send filter-input-port-id))))
+                       ([send frame]
+                        (send filter-input-port-id [i frame])))])))
+           partitioned-ports)
+
+          ports
+          (into []
+                (map-indexed
+                 (fn [i output-format]
+                   {:id [this :output i]
+                    :format output-format}))
+                output-formats)]
+      {:ports ports
+       :subscriptions subscriptions}))
   fm/IMediaSource
+  (-media-inputs [this]
+    medias)
   (-media [this]
     (let [all-medias (into []
                            (map fm/-media)
@@ -733,8 +1078,12 @@
                                       :width (:width first-frame)
                                       :height (:height first-frame)
                                       :pixel-format (:format first-frame)))]
-                         (fm/->FrameSource frames
-                                           output-format))))
+                         (fm/frame-source frames
+                                          output-format
+                                          (into []
+                                                cat
+                                                all-medias)
+                                          "concat"))))
                 (range stream-count))]
       outputs)))
 
@@ -889,13 +1238,17 @@
 
 (defrecord ForceFormat [format media]
   fm/IMediaSource
+  (-media-inputs [this]
+    [media])
   (-media [this]
     (mapv (fn [src]
-            (fm/->FrameSource
+            (fm/frame-source
              (fm/-frames src)
              (merge
               (fm/-format src)
-              (datafy-media/map->format format))))
+              (datafy-media/map->format format))
+             [src]
+             "force-format"))
           (fm/-media media))))
 
 (defn force-format
@@ -904,7 +1257,65 @@
   (->ForceFormat format media))
 
 (defrecord Swscale [opts output-format media]
+  fm/IComputeNode
+  (configure! [this input-ports]
+    (let [
+          subscriptions
+          (into {}
+                  (comp
+                   (filter (fn [port]
+                             (let [input-format (:format port)]
+                               (= :media-type/video
+                                  (:media-type input-format)))))
+                   (map (fn [port]
+                          (let [
+                                input-format (:format port)
+                                output-format
+                                (if output-format
+                                  (merge
+                                   input-format
+                                   (datafy-media/map->format output-format
+                                                             :media-type/video))
+                                  input-format)
+                                xf
+                                (video/swscale input-format output-format opts)
+                                rf
+                                (xf
+                                 (fn sub
+                                   ([send]
+                                    (sub send nil)
+                                    (send [this (:id port)]))
+                                   ([send frame]
+                                    (send [this (:id port)] frame)
+                                    send)))]
+                            [(:id port)
+                             rf]))))
+                  input-ports)
+          ports
+          (into []
+                (map (fn [port]
+                       (let [input-format (:format port)]
+                         (if (= :media-type/video
+                                (:media-type input-format))
+                           (let [output-format
+                                 (if output-format
+                                   (merge
+                                    input-format
+                                    (datafy-media/map->format output-format
+                                                              :media-type/video))
+                                   input-format)]
+                             {:id [this (:id port)]
+                              :format output-format})
+                           ;; else
+                           port))))
+                input-ports)]
+      {:ports ports
+       :subscriptions subscriptions}))
+
+
   fm/IMediaSource
+  (-media-inputs [this]
+    [media])
   (-media [this]
     (mapv (fn [src]
             (if (fm/video? src)
@@ -914,11 +1325,13 @@
                      input-format
                      (datafy-media/map->format output-format
                                                :media-type/video))]
-                (fm/->FrameSource
+                (fm/frame-source
                  (sequence
                   (video/swscale input-format output-format opts)
                   (fm/-frames src))
-                 output-format))
+                 output-format
+                 [src]
+                 "swscale"))
               src))
           (fm/-media media))))
 
