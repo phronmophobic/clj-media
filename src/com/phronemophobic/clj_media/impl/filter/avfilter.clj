@@ -874,25 +874,18 @@
           port-sort-fn (fn [port]
                            (= :media-type/audio
                               (:media-type (:format port))))
-          media-indexes
-          (into {}
-                (map-indexed (fn [i media]
-                               [media i]))
-                medias)
-
           partitioned-ports
           (into []
-                (comp
-                 (x/sort-by (fn [port]
-                              (-> port
-                                  :media
-                                  media-indexes)))
-                 (x/by-key :media
-                           (comp
-                            (x/sort-by port-sort-fn)
-                            (x/into [])))
-                 (map second))
-                input-ports)
+                (map (fn [media]
+                       (into []
+                             (comp
+                              ;; medias can contain duplicates!
+                              (filter (fn [port]
+                                        (= media
+                                           (:media port))))
+                              (x/sort-by port-sort-fn))
+                             input-ports)))
+                medias)
           _ (let [fqs (into []
                             (map (fn [ports]
                                    (frequencies
@@ -916,7 +909,7 @@
 
           first-media-ports (first partitioned-ports)
           opts
-          {:n (count input-ports)
+          {:n (count partitioned-ports)
            :v (->> first-media-ports
                    (filter #(= :media-type/video
                                (-> % :format :media-type)))
@@ -950,9 +943,13 @@
                                            (fn [i _]
                                              i)))
                                     partitioned-ports))
+
           subscriptions
           (into
-           {filter-input-port-id rf}
+           ;; subscriptions is usually a map
+           ;; but we might have multiple subscriptions
+           ;; for the same port due to duplicate media inputs
+           [[filter-input-port-id rf]]
            (comp cat
                  (map-indexed
                   (fn [i port]
