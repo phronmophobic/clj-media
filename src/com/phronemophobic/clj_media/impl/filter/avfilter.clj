@@ -803,13 +803,7 @@
                                                               0)]
                        (cond
                          (zero? err)
-                         (let [;; time-base (get time-bases output-context)
-                               ;; frame (doto frame
-                               ;;         (.writeField "pts"
-                               ;;                      (av_rescale_q (:pts frame)
-                               ;;                                    time-base
-                               ;;                                    (:time-base (nth input-formats i)))))
-                               result (rf result [i frame])]
+                         (let [result (rf result [i frame])]
 
                            (if (reduced? result)
                              result
@@ -842,13 +836,7 @@
                                                         0)]
                  (cond
                    (zero? err)
-                   (let [;; time-base (get time-bases output-context)
-                         ;; frame (doto frame
-                         ;;         (.writeField "pts"
-                         ;;                      (av_rescale_q (:pts frame)
-                         ;;                                    time-base
-                         ;;                                    (:time-base (nth input-formats i)))))
-                         result (rf result [i frame])]
+                   (let [result (rf result [i frame])]
                      (if (reduced? result)
                        result
                        (recur result)))
