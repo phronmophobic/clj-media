@@ -132,7 +132,8 @@
          :time-base (av/->avrational (:num time-base)
                           (:den time-base))
          :pixel-format (av_buffersink_get_format buffersink-context)
-         :media-type :media-type/video}]
+         :media-type :media-type/video}
+        frame (av_frame_alloc)]
 
     {:output-format output-format
      :xform
@@ -147,13 +148,13 @@
             (av_buffersrc_write_frame buffer-context nil))
           (let [result
                 (loop [result result]
-                  (let [frame (av/new-frame)
-                        err (av_buffersink_get_frame_flags buffersink-context
+                  (let [err (av_buffersink_get_frame_flags buffersink-context
                                                            frame
                                                            0)]
                     (cond
                       (zero? err)
-                      (let [result (rf result frame) ]
+                      (let [result (rf result frame)]
+                        (av_frame_unref frame)
                         (if (reduced? result)
                           result
                           (recur result)))
@@ -169,21 +170,21 @@
                       (reduced {:error-code err
                                 :error-msg (av/error->str err)
                                 :type :transcode-error}))))]
+            (av_frame_free (doto (PointerByReference.)
+                              (.setValue (.getPointer frame))))
             (rf result)))
          ([result [input-idx input-frame]]
           (let [buffer-context (nth input-contexts input-idx)]
             (av_buffersrc_write_frame buffer-context
                                       input-frame))
           (loop [result result]
-            (let [frame (av/new-frame)
-                  ;; TODO: check av_buffersink_get* to
-                  ;;       to check format types
-                  err (av_buffersink_get_frame_flags buffersink-context
+            (let [err (av_buffersink_get_frame_flags buffersink-context
                                                      frame
                                                      0)]
               (cond
                 (zero? err)
-                (let [result (rf result frame) ]
+                (let [result (rf result frame)]
+                  (av_frame_unref frame)
                   (if (reduced? result)
                     result
                     (recur result)))
@@ -197,8 +198,7 @@
                 :else
                 (reduced {:error-code err
                           :error-msg (av/error->str err)
-                          :type :transcode-error})))))))})
-  )
+                          :type :transcode-error})))))))}))
 
 (defn audio-filter [input-formats filter-name opts]
   (let [filter-graph (avfilter_graph_alloc)
@@ -290,7 +290,9 @@
          ;; copy structs. known to mutate in place
          :time-base (av/->avrational (:num time-base)
                                      (:den time-base))
-         :media-type :media-type/audio}]
+         :media-type :media-type/audio}
+
+        frame (av_frame_alloc)]
 
 
     {:output-format output-format
@@ -305,13 +307,13 @@
             (av_buffersrc_write_frame buffer-context nil))
           (let [result
                 (loop [result result]
-                  (let [frame (av/new-frame)
-                        err (av_buffersink_get_frame_flags buffersink-context
+                  (let [err (av_buffersink_get_frame_flags buffersink-context
                                                            frame
                                                            0)]
                     (cond
                       (zero? err)
-                      (let [result (rf result frame) ]
+                      (let [result (rf result frame)]
+                        (av_frame_unref frame)
                         (if (reduced? result)
                           result
                           (recur result)))
@@ -327,21 +329,21 @@
                       (reduced {:error-code err
                                 :error-msg (av/error->str err)
                                 :type :transcode-error}))))]
+            (av_frame_free (doto (PointerByReference.)
+                          (.setValue (.getPointer frame))))
             (rf result)))
          ([result [input-index input-frame]]
           (let [buffer-context (nth input-contexts input-index)]
             (av_buffersrc_write_frame buffer-context
                                       input-frame))
           (loop [result result]
-            (let [frame (av/new-frame)
-                  ;; TODO: check av_buffersink_get* to
-                  ;;       to check format types
-                  err (av_buffersink_get_frame_flags buffersink-context
+            (let [err (av_buffersink_get_frame_flags buffersink-context
                                                      frame
                                                      0)]
               (cond
                 (zero? err)
-                (let [result (rf result frame) ]
+                (let [result (rf result frame)]
+                  (av_frame_unref frame)
                   (if (reduced? result)
                     result
                     (recur result)))
@@ -389,9 +391,6 @@
 
                               xf (comp (map (fn [frame]
                                               [0 frame]))
-                                       ;; signal EOF
-                                       ;; prevents extra buffering for some filters
-                                       (insert-last [0 nil])
                                        xform)
 
 
@@ -784,7 +783,8 @@
                            :pixel-format (av_buffersink_get_format buffersink-context)
                            :media-type :media-type/video}))]
                    output-format)))
-              output-contexts)]
+              output-contexts)
+        frame (av_frame_alloc)]
 
     {:output-formats output-formats
      :xform
@@ -801,14 +801,13 @@
                 (reduce
                  (fn [result [i output-context]]
                    (loop [result result]
-                     (let [frame (av/new-frame)
-                           err (av_buffersink_get_frame_flags output-context
+                     (let [err (av_buffersink_get_frame_flags output-context
                                                               frame
                                                               0)]
                        (cond
                          (zero? err)
                          (let [result (rf result [i frame])]
-
+                           (av_frame_unref frame)
                            (if (reduced? result)
                              result
                              (recur result)))
@@ -825,6 +824,8 @@
                                    :type :transcode-error})))))
                  result
                  (map-indexed vector output-contexts))]
+            (av_frame_free (doto (PointerByReference.)
+                             (.setValue (.getPointer frame))))
             (rf result))
           )
          ([result [input-idx input-frame]]
@@ -834,13 +835,13 @@
           (reduce
            (fn [result [i output-context]]
              (loop [result result]
-               (let [frame (av/new-frame)
-                     err (av_buffersink_get_frame_flags output-context
+               (let [err (av_buffersink_get_frame_flags output-context
                                                         frame
                                                         0)]
                  (cond
                    (zero? err)
                    (let [result (rf result [i frame])]
+                     (av_frame_unref frame)
                      (if (reduced? result)
                        result
                        (recur result)))
