@@ -537,6 +537,8 @@
                  (send filter-output-port-id frame)
                  send)))
 
+          active-inputs (atom (set
+                               (range (count filter-input-ports))))
           subscriptions
           (into
            {filter-input-port-id rf}
@@ -545,8 +547,10 @@
                     [(:id port)
                      (fn sub
                        ([send]
-                        (sub send nil)
-                        (send filter-input-port-id))
+                        (let [remaining (swap! active-inputs disj i)]
+                          (sub send nil)
+                          (when (empty? remaining)
+                            (send filter-input-port-id))))
                        ([send frame]
                         (send filter-input-port-id [i frame])))])))
            filter-input-ports)]
