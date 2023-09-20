@@ -237,8 +237,9 @@
                                  (av/eof? err)
                                  (do (send [this :packets (:stream_index packet)]
                                            packet)
-                                     ;; flush with 1 arity
-                                     (send [this :packets (:stream_index packet)])
+                                     ;; flush all
+                                     (doseq [i (range num-streams)]
+                                       (send [this :packets i]))
                                      true)
 
                                  :else ;; some other error
