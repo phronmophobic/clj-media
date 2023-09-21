@@ -113,6 +113,16 @@
   [media]
   (fm/filter-video media))
 
+(defn filter-media-types
+  "Returns media with only types in `media-types`."
+  [media-types media]
+  (fm/filter-media-types media-types media))
+
+(defn remove-media-types
+  "Returns media without any types in `media-types`."
+  [media-types media]
+  (fm/remove-media-types media-types media))
+
 (defn union
   "Returns media that combines all the streams from `medias`."
   [& medias]

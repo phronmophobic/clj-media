@@ -124,19 +124,36 @@
           (into []
                 (comp
                  (map (fn [stream]
-                        (let [stream+ (Structure/newInstance AVStreamByReference
-                                                             stream)
-                              stream-index (:index stream+)]
-                          {:id [this :packets stream-index]
-                           :format ::packet}))))
+                        (Structure/newInstance AVStreamByReference
+                                               stream)))
+                 (remove (fn [stream+]
+                           (contains? #{AVMEDIA_TYPE_VIDEO
+                                        AVMEDIA_TYPE_AUDIO}
+                                      (-> stream+
+                                          :codecpar
+                                          :codec_type))))
+                 (map (fn [stream+]
+                        {:id [this (:index stream+)]
+                         :format {:media-type
+                                  (datafy-media/media-type->kw
+                                   (-> stream+
+                                       :codecpar
+                                       :codec_type))}})))
                 streams)
           decoders
           (into []
                 (comp
                  (map (fn [stream]
-                        (let [stream+ (Structure/newInstance AVStreamByReference
-                                                             stream)
-                              stream-index (:index stream+)
+                        (Structure/newInstance AVStreamByReference
+                                               stream)))
+                 (filter (fn [stream+]
+                           (contains? #{AVMEDIA_TYPE_VIDEO
+                                        AVMEDIA_TYPE_AUDIO}
+                                      (-> stream+
+                                          :codecpar
+                                          :codec_type))))
+                 (map (fn [stream+]
+                        (let [stream-index (:index stream+)
 
                               codec-parameters (:codecpar stream+)
                               codec-id (:codec_id codec-parameters)
@@ -253,7 +270,8 @@
       {:ports (into []
                     cat
                     [frame-ports
-                     ;; packet-ports
+                     ;; only for non audio/video streams
+                     packet-ports
                      ])
        :subscriptions subscriptions
        :pumps pumps
@@ -688,6 +706,39 @@
                  (= :media-type/video
                     (:media-type (-format src))))
                (-media media)))))
+
+(defn filter-media-types [media-types media]
+  (reify
+    IComputeNode
+    (configure! [this input-ports]
+      {:ports (into []
+                    (filter (fn [port]
+                              (media-types (get-in port [:format :media-type]))))
+                    input-ports)})
+    IMediaSource
+    (-media-inputs [this]
+      [media])
+    (-media [this]
+      (filterv (fn [src]
+                 (media-types (:media-type (-format src))))
+               (-media media)))))
+
+(defn remove-media-types [media-types media]
+  (reify
+    IComputeNode
+    (configure! [this input-ports]
+      {:ports (into []
+                    (remove (fn [port]
+                              (media-types (get-in port [:format :media-type]))))
+                    input-ports)})
+    IMediaSource
+    (-media-inputs [this]
+      [media])
+    (-media [this]
+      (into []
+            (remove (fn [src]
+                      (media-types (:media-type (-format src)))))
+            (-media media)))))
 
 (defrecord Union [medias]
   IComputeNode
