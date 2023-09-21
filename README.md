@@ -8,7 +8,7 @@ Powered by [FFmpeg](https://ffmpeg.org/) and [clong](https://github.com/phronmop
 ## Dependency
 
 ```clojure
-com.phronemophobic/clj-media {:mvn/version "2.0"}
+com.phronemophobic/clj-media {:mvn/version "2.1"}
 ```
 
 ## Documentation
