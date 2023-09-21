@@ -482,27 +482,20 @@
 
           filter-input-ports
           (into []
-                (filter matches-media-type?)
-                input-ports)
-
-          ;; input ports not guaranteed to be sorted
-          media-indexes
-          (into {}
-                (map-indexed (fn [i media]
-                               [media i]))
+                (mapcat
+                 (fn [media]
+                   (into []
+                         (comp
+                          (filter matches-media-type?)
+                          ;; medias can contain duplicates!
+                          (filter (fn [port]
+                                    (= media
+                                       (:media port)))))
+                         input-ports)))
                 medias)
-          filter-input-ports (sort-by (fn [port]
-                                        (assert (media-indexes
-                                                 (:media port)))
-                                        (media-indexes
-                                         (:media port)))
-                                      filter-input-ports)
 
-          _ (when (some #(not= 1 %)
-                        (->> filter-input-ports
-                             (map :media)
-                             frequencies
-                             (map second)))
+          _ (when (not= (count medias)
+                        (count filter-input-ports))
               (throw (ex-info (str "Filter " filter-name " expects all input media to have exactly one media of type " media-type)
                               {:filter this})))
 
@@ -540,7 +533,7 @@
                                (range (count filter-input-ports))))
           subscriptions
           (into
-           {filter-input-port-id rf}
+           [[filter-input-port-id rf]]
            (comp (map-indexed
                   (fn [i port]
                     [(:id port)
