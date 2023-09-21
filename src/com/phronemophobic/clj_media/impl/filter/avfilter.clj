@@ -1202,7 +1202,11 @@
     `(defn ~fn-name
        ~doc-string
        ([~@inputs]
-        (~fn-name nil ~@inputs))
+        ;; some filters use the same name for options as the name of the filter
+        ;; needs to be qualified
+        (~(symbol (name (ns-name *ns*))
+                  (name fn-name))
+         nil ~@inputs))
        ([~opts ~@inputs]
         ~(if (= 1 (count inputs))
            `(->AVFilterMedia ~filter-name ~opts## ~media-type ~(first inputs))
