@@ -716,8 +716,8 @@
           (fn [send]
             (if-let [s @frame-seq]
               (do (send this (first s))
-                  (let [nexts (vswap! frame-seq next)]
-                    (nil? nexts)))
+                  (vswap! frame-seq next)
+                  false)
               (do
                 ;; flush
                 (send this)
