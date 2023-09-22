@@ -352,7 +352,7 @@ encoded --> output.mp4
     g))
 
 (def frame-format
-  (clj-media/video-format {:pixel-format :pixel-format/rgb24
+  (clj-media/video-format {:pixel-format :pixel-format/bgr24
                            :time-base 24
                            :line-size (* (.getWidth frame-img)
                                          ;; rgb24 has 3 bytes per pixel when packed
@@ -391,14 +391,7 @@ encoded --> output.mp4
 {:nextjournal.clerk/visibility {:code :hide :result :show}}
 (write! (clj-media/make-media frame-format
                               generated-frames)
-        "generated-movie.mp4"
-        {:video-format
-         {:codec {:name "h264",
-                  :long-name "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
-                  :media-type :media-type/video,
-                  :id 27}
-          :pixel-format :pixel-format/yuv420p}})
-
+        "generated-movie.mp4")
 
 ;; ## Filtering
 
