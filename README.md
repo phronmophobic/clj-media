@@ -22,7 +22,7 @@ Features get added as time and motivation allows. If you would be excited to see
 
 - [ ] Reading/writing metadata.
 - [ ] Add support for choosing different ffmpeg builds.
-- [ ] Improve memory usage.
+- [X] Improve memory usage.
 - [ ] Fix reflection warnings.
 - [X] Add support for creating media from raw samples.
 - [ ] Add more options for configuring output codecs.
