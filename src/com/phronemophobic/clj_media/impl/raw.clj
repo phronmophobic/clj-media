@@ -30,30 +30,56 @@
 (def ^:private lib
   (com.sun.jna.NativeLibrary/getProcess))
 
-(import 'org.bytedeco.javacpp.Loader)
+(defmacro ^:private if-loaded [cls then else]
+  (let [loaded?
+        (try
+          (Class/forName (name cls))
+          true
+          (catch ClassNotFoundException e
+            false))]
+    (if loaded?
+      then
+      else)))
+
+(defn get-loaded-libraries []
+  (if-loaded org.bytedeco.javacpp.Loader
+    (org.bytedeco.javacpp.Loader/getLoadedLibraries)
+    {}))
 
 ;; load all libraries
 ;; need to initialize class instances because native libraries
 ;;   are loaded in static initializers
-(do (import 'org.bytedeco.ffmpeg.global.avcodec) (avcodec.))
-(do (import 'org.bytedeco.ffmpeg.global.avdevice) (avdevice.))
-(do (import 'org.bytedeco.ffmpeg.global.avfilter) (avfilter.))
-(do (import 'org.bytedeco.ffmpeg.global.avformat) (avformat.))
-(do (import 'org.bytedeco.ffmpeg.global.avutil) (avutil.))
-(do (import 'org.bytedeco.ffmpeg.global.swresample) (swresample.))
-(do (import 'org.bytedeco.ffmpeg.global.swscale) (swscale.))
+(defn ^:private try-load [classname]
+  (when-let [cls (try
+                   (Class/forName (name classname))
+                   (catch ClassNotFoundException e
+                     nil))]
+    (when-let [constructor (.getConstructor cls
+                                            (into-array Class []))]
+      (.newInstance constructor (to-array [])))))
+
+(run! try-load
+      '[org.bytedeco.ffmpeg.global.avcodec
+        org.bytedeco.ffmpeg.global.avdevice
+        org.bytedeco.ffmpeg.global.avfilter
+        org.bytedeco.ffmpeg.global.avformat
+        org.bytedeco.ffmpeg.global.avutil
+        org.bytedeco.ffmpeg.global.swresample
+        org.bytedeco.ffmpeg.global.swscale])
 
 ;; list loaded libraries
 ;; (keys (Loader/getLoadedLibraries))
 
 
-(def ^:private lib-versions ["avutil@.58"
-                             "avfilter@.9"
-                             "avformat@.60"
-                             "avdevice@.60"
-                             "swresample@.4"
-                             "swscale@.7"
-                             "avcodec@.60"])
+(def ^:private lib-versions
+  {"avutil" "avutil@.58"
+   "avfilter" "avfilter@.9"
+   "avformat" "avformat@.60"
+   "avdevice" "avdevice@.60"
+   "swresample" "swresample@.4"
+   "swscale" "swscale@.7"
+   "avcodec" "avcodec@.60"})
+
 (def ^:private lib-names ["avutil"
                           "avfilter"
                           "avformat"
@@ -69,9 +95,10 @@
   ([lib-versions]
    (let [new-libs
          (into []
-               (map (fn [lib-version]
-                      (let [lib-path (get (Loader/getLoadedLibraries) lib-version)]
-                        (com.sun.jna.NativeLibrary/getInstance lib-path))))
+               (map (fn [[lib-name lib-version]]
+                      (if-let [lib-path (get (get-loaded-libraries) lib-version)]
+                        (com.sun.jna.NativeLibrary/getInstance lib-path)
+                        (com.sun.jna.NativeLibrary/getInstance lib-name))))
                lib-versions)]
      
      (swap! libs into new-libs))))

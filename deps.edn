@@ -10,8 +10,7 @@
  {
   :project
   {:jvm-opts [;; "-Djava.library.path=/opt/local/lib"
-              ;; "-Djna.library.path=../llvm-project/build/out/lib:/opt/local/lib"
-              ;;"-Djna.library.path=../llvm-project/build/out/lib"
+              ;; "-Djna.library.path=../FFmpeg/build/lib"
               ]
    :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.13-beta"}
                 com.phronemophobic/clong {:local/root "../clong"}
