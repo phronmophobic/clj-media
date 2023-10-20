@@ -16,6 +16,32 @@ com.phronemophobic/clj-media {:mvn/version "2.1"}
 [Guide](https://phronmophobic.github.io/clj-media/)  
 [API docs](https://phronmophobic.github.io/clj-media/reference/)
 
+## Locally compiled FFmpeg
+
+clj-media also supports using a locally compiled FFmpeg build.
+
+Example compilation:
+```bash
+git clone https://github.com/FFmpeg/FFmpeg.git
+cd FFmpeg
+./configure  --extra-ldflags='-Wl,-ld_classic' --enable-shared --prefix=`pwd`/build
+make
+make install
+```
+
+To use the local build:
+1. Add the libraries to the JNA library path
+2. Exclide the ffmpeg dependency, `org.bytedeco/ffmpeg-platform`
+
+Example alias:
+```edn
+{:aliases
+ {:local-ffmpeg
+  {:jvm-opts ["-Djna.library.path=/path/to/FFmpeg/build/lib"]
+   :deps {com.phronemophobic/clj-media {:mvn/version "2.1"
+                                        :exclusions [org.bytedeco/ffmpeg-platform]}}}}}
+```
+
 ## "Roadmap"
 
 Features get added as time and motivation allows. If you would be excited to see a particular feature, please file an issue and let me know!
