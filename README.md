@@ -47,7 +47,7 @@ Example alias:
 Features get added as time and motivation allows. If you would be excited to see a particular feature, please file an issue and let me know!
 
 - [ ] Reading/writing metadata.
-- [ ] Add support for choosing different ffmpeg builds.
+- [X] Add support for choosing different ffmpeg builds.
 - [X] Improve memory usage.
 - [ ] Fix reflection warnings.
 - [X] Add support for creating media from raw samples.
