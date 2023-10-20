@@ -83,7 +83,10 @@
         buffersink-context (.getValue buffersink-context*)
 
         pix-fmts (doto (IntByReference.)
-                   (.setValue (:pixel-format (first input-formats))))
+                   (.setValue
+                    (if-let [pixel-format (:avfilter/pixel-format opts)]
+                      (datafy-media/kw->pixel-format pixel-format)
+                      (:pixel-format (first input-formats)))))
         _ (av_opt_set_bin buffersink-context "pix_fmts"
                           pix-fmts
                           (* 1 4)
@@ -95,7 +98,8 @@
                         (avfilter_get_by_name filter-name)
                         nil)
         _ (assert filter-context)
-        _ (set-filter-context-options filter-context filter-name opts)
+        _ (set-filter-context-options filter-context filter-name
+                                      (dissoc opts :avfilter/pixel-format))
 
         _ (avfilter_init_str filter-context nil)
 
