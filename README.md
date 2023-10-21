@@ -31,7 +31,7 @@ make install
 
 To use the local build:
 1. Add the libraries to the JNA library path
-2. Exclide the ffmpeg dependency, `org.bytedeco/ffmpeg-platform`
+2. Exclude the ffmpeg dependency, `org.bytedeco/ffmpeg-platform`
 
 Example alias:
 ```edn
