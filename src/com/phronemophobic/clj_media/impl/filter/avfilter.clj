@@ -790,7 +790,6 @@
          ([]
           (rf))
          ([result]
-          (rf result)
           ;; flush
           (doseq [buffer-context input-contexts]
             (av_buffersrc_write_frame buffer-context nil))
