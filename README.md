@@ -38,7 +38,7 @@ Example alias:
 {:aliases
  {:local-ffmpeg
   {:jvm-opts ["-Djna.library.path=/path/to/FFmpeg/build/lib"]
-   :deps {com.phronemophobic/clj-media {:mvn/version "2.2"
+   :deps {com.phronemophobic/clj-media {:mvn/version "2.3"
                                         :exclusions [org.bytedeco/ffmpeg-platform]}}}}}
 ```
 
