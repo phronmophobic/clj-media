@@ -153,11 +153,13 @@
   Stream can either be:
   - an index
   - `:audio`, which selects the first audio stream.
-  - `:video`, which seelcts the first video stream.
+  - `:video`, which selects the first video stream.
 
   `opts` is an optional map with the following keys:
   `:format` A media format description as returned by
-            `audio-format` or `video-format`.
+            `audio-format` or `video-format`. The
+            frames will be transcoded to the provided
+            format if not already in that format.
   "
   ([media]
    (fm/frames-reducible media 0 nil))
