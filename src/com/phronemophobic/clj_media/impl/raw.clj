@@ -137,6 +137,22 @@
     ((requiring-resolve 'com.phronemophobic.clong.clang/easy-api) nil
        clang-args)))
 
+(defn filter-structs [api]
+  (update api :structs
+          #(filterv (fn [{:keys [id] :as struct}]
+                      (let [id-str (name id)]
+                        (or (str/starts-with? id-str "AV")
+                            (str/starts-with? id-str "Sw")
+                            (= "RcOverride" id-str))))
+                    %)))
+(defn filter-fns [api]
+  (update api :functions
+          #(filterv (fn [{:keys [id] :as struct}]
+                      (let [id-str (name id)]
+                        (or (str/starts-with? id-str "av")
+                            (str/starts-with? id-str "sw"))))
+                    %)))
+
 (defn ^:private dump-api []
   (let [outf (io/file
               "resources"
@@ -147,7 +163,10 @@
         api (parse-av-api)]
     (.mkdirs (.getParentFile outf))
     (with-open [w (io/writer outf)]
-      ((requiring-resolve 'com.phronemophobic.clong.clang/write-edn) w api))))
+      (let [api (-> api
+                    filter-structs
+                    filter-fns)]
+        ((requiring-resolve 'com.phronemophobic.clong.clang/write-edn) w api)))))
 
 (defn pointer? [datatype]
   (and (vector? datatype)
