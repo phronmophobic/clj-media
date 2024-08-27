@@ -54,7 +54,7 @@
     :media-type :media-type/audio}))
 
 (defn video-format
-  "Convenience function for returning an audio format."
+  "Convenience function for returning an video format."
   [{:keys [pixel-format]
     :as format}]
   (when (not pixel-format)
