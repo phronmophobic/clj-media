@@ -687,12 +687,16 @@
           (assert
            (>= (raw/av_frame_get_buffer frame 0)
                0))
-          (when (not= (aget (:linesize frame) 0)
-                      (alength bytes))
-            (throw (ex-info "Bytes are the wrong length for sample format."
-                            {:frame m
-                             :bytes bytes
-                             :expected-length (aget (:linesize frame) 0)})))
+          ;; linesize might not match the byte array size
+          ;; since linesize is sometimes set for a particular alignment
+          ;; I think line size is set by raw/av_frame_get_buffer
+          (when (> (alength bytes)
+                   (aget (:linesize frame) 0))
+                (throw (ex-info "Bytes are the wrong length for sample format."
+                                {:frame m
+                                 :bytes bytes
+                                 :actual-size (alength bytes)
+                                 :expected-length (aget (:linesize frame) 0)})))
           (.write (.getPointer (aget (:data frame) 0)) 0 bytes 0 (alength bytes)))
 
         :media-type/video
