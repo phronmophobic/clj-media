@@ -1,6 +1,7 @@
 (ns com.phronemophobic.clj-media.impl.audio
   (:require [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
+            [clojure.core.async :as async]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [clojure.pprint :refer [pprint]])
@@ -12,6 +13,7 @@
    com.sun.jna.ptr.LongByReference
    com.sun.jna.ptr.ByteByReference
    com.sun.jna.Structure
+   java.io.ByteArrayOutputStream
 
    (javax.sound.sampled AudioFormat
                         AudioFormat$Encoding
@@ -19,10 +21,13 @@
                         AudioSystem
                         DataLine
                         DataLine$Info
+                        Port$Info
                         Line
                         LineUnavailableException
                         SourceDataLine
+                        TargetDataLine
                         UnsupportedAudioFileException
+                        Mixer
                         )
 
    )
@@ -145,13 +150,11 @@
   ,
   )
 
-(defn play-sound []
-  (let [
-        sample-rate 44100
+
+(defn default-stereo-format []
+  (let [sample-rate 44100
         sample-size-in-bits 16
         channels 2
-        ;; this is an educated guess
-        ;; channels * sample-size-in-bits/byte-size
         frame-size (* channels (/ sample-size-in-bits 8))
 
         frame-rate 44100
@@ -162,23 +165,48 @@
                                    channels
                                    frame-size
                                    frame-rate
-                                   big-endian?)
-        info (DataLine$Info. SourceDataLine
-                             audio-format)
-        source-data-line (^SourceDataLine AudioSystem/getLine info)
-        source-data-line (doto ^SourceDataLine source-data-line
-                           (.open audio-format)
-                           (.start))]
-    
-    (fn
-      ([])
-      ([read-bytes]
-       (.drain source-data-line)
-       (.close source-data-line)
-       read-bytes)
-      ([read-bytes buf]
-       (+ read-bytes
-          (.write source-data-line buf 0 (alength buf)))))))
+                                   big-endian?)]
+    audio-format))
+
+(defn default-mono-format []
+  (let [sample-rate 44100
+        sample-size-in-bits 16
+        channels 1
+        frame-size (* channels (/ sample-size-in-bits 8))
+
+        frame-rate 44100
+        big-endian? false
+        audio-format (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                   sample-rate
+                                   sample-size-in-bits
+                                   channels
+                                   frame-size
+                                   frame-rate
+                                   big-endian?)]
+    audio-format))
+
+(defn play-sound
+  ([]
+   (play-sound {}))
+  ([opts]
+   (let [audio-format (or (:audio-format opts)
+                          (default-stereo-format))
+         info (DataLine$Info. SourceDataLine
+                              audio-format)
+         source-data-line (^SourceDataLine AudioSystem/getLine info)
+         source-data-line (doto ^SourceDataLine source-data-line
+                            (.open audio-format)
+                            (.start))]
+     
+     (fn
+       ([])
+       ([read-bytes]
+        (.drain source-data-line)
+        (.close source-data-line)
+        read-bytes)
+       ([read-bytes buf]
+        (+ read-bytes
+           (.write source-data-line buf 0 (alength buf))))))))
 
 
 
@@ -362,5 +390,120 @@
 
 
 
+(defn default-recording-audio-format []
+  (let [
+        sample-rate 44100
+        sample-size-in-bits 16
+        ;; mono!
+        channels 1
+        ;; this is an educated guess
+        ;; channels * sample-size-in-bits/byte-size
+        frame-size (* channels (/ sample-size-in-bits 8))
+
+        frame-rate 44100
+        big-endian? false
+        audio-format (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                   sample-rate
+                                   sample-size-in-bits
+                                   channels
+                                   frame-size
+                                   frame-rate
+                                   big-endian?)]
+    audio-format))
+
+(defn get-microphone-mixer
+  ^Mixer []
+  (->> (AudioSystem/getMixerInfo)
+       (filter #(= "MacBook Air Microphone"
+                   (.getName %)))
+       (map #(AudioSystem/getMixer %))
+       
+       first))
+
+(defn record-audio
+  ([]
+   (record-audio {}))
+  ([opts]
+   (let [
+         audio-format (or (:audio-format opts)
+                          (default-mono-format))
 
 
+         line-info (DataLine$Info. TargetDataLine audio-format)
+         ^TargetDataLine
+         ;; line (.getLine (get-microphone-mixer) line-info)
+         line (AudioSystem/getLine line-info)
+         ;; line (AudioSystem/getLine Port$Info/MICROPHONE)
+         ;; _ (assert (.matches (default-recording-audio-format) (.getFormat line)))
+
+         _ (.open line (default-recording-audio-format))
+
+         out (ByteArrayOutputStream.)
+         buf-size (quot (.getBufferSize line) 5)
+         ;; The number of bytes to be read must represent an integral number of sample frames
+         buf-size (- buf-size (mod buf-size (-> (.getFormat line) (.getFrameSize))))
+         
+         buf (byte-array buf-size)
+         running? (atom true)]
+
+     (.start line)
+     (async/thread
+       (loop []
+         (when @running?
+           (let [bytes-read (.read line buf 0 (alength buf))]
+             (.write out buf 0 bytes-read)
+             (recur)))))
+
+     (fn []
+       (reset! running? false)
+       (.stop line)
+       (.drain line)
+       (loop []
+         (let [bytes-read (.read line buf 0 (alength buf))]
+           (when (pos? bytes-read)
+             (.write out buf 0 bytes-read)
+             (recur))))
+       (.toByteArray out)))))
+
+(comment
+  (def line-info (DataLine$Info. TargetDataLine (default-recording-audio-format)))
+  (AudioSystem/isLineSupported line-info)
+
+
+  (def get-bytes (record-audio {}))
+
+  (def my-bytes (get-bytes))
+
+  (every? zero? my-bytes)
+
+  (with-open [fos (java.io.FileOutputStream. "foo.wav")]
+    (.write fos my-bytes))
+
+  (def mixinfos (AudioSystem/getMixerInfo))
+
+  (def rf (play-sound {:audio-format (default-mono-format)}))
+  (rf 0 my-bytes)
+  (rf 0)
+
+  ,)
+
+
+(defn ^:private print-supported-formats []
+  (let [mixers (AudioSystem/getMixerInfo)]
+    (doseq [info mixers]
+      (let [mixer (AudioSystem/getMixer info)
+            line-info (AudioSystem/getTargetLineInfo (DataLine$Info. TargetDataLine (AudioFormat. 44100 16 1 true false)))]
+        (when (seq line-info)
+          (println "Mixer name:" (.getName info))
+          (doseq [format (map #(.getFormats %) line-info)]
+            (doseq [f format]
+              (println "Supported format:" f))))))))
+
+;; Call the function to print supported formats
+;; (print-supported-formats)
+
+(defn -main [& arg]
+
+  (let [get-bytes (record-audio {})]
+    (Thread/sleep 2000)
+    (prn (every? zero? (get-bytes)))))
