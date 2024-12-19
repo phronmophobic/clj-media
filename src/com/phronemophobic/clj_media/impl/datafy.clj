@@ -15,6 +15,8 @@
    com.sun.jna.Pointer
    com.sun.jna.ptr.PointerByReference))
 
+(set! *warn-on-reflection* true)
+
 (raw/import-structs!)
 
 (defn ch-layout->str [ch-layout]
@@ -26,7 +28,7 @@
                        :err err})))
     (String. (.getByteArray buf 0 err) "ascii")))
 
-(defn str->ch-layout [s]
+(defn ^AVChannelLayoutByReference str->ch-layout [s]
   (assert s "Invalid ch-layout.")
   (let [ch-layout (AVChannelLayoutByReference.)
         err (av_channel_layout_from_string ch-layout s)]
@@ -35,7 +37,7 @@
                       {:channel-layout-str s})))
     ch-layout))
 
-(defn pointer-seq [p size terminal]
+(defn pointer-seq [^Pointer p ^long size terminal]
   (loop [offset 0
          results []]
     (let [x (case size
@@ -48,7 +50,7 @@
 
 (def ^:private avrational-size (.size (AVRational.)))
 (defn avrational-seq [p]
-  (loop [p p
+  (loop [^Pointer p p
          results []]
     (let [ratio (Structure/newInstance AVRationalByReference p)]
       (if (and (zero? (:num ratio))
@@ -60,7 +62,7 @@
 
 (def ^:private avchannellayout-size (.size (AVChannelLayout.)))
 (defn avchannellayout-seq [p]
-  (loop [p p
+  (loop [^Pointer p p
          results []]
     (let [bs (.getByteArray p 0 avchannellayout-size)]
       (if (every? zero? bs)
@@ -85,7 +87,7 @@
 (defmulti read-bytes (fn [type bs]
                        type))
 (defmethod read-bytes :avoption-type/int64
-  [_ bs]
+  [_ ^byte/1 bs]
   (let [_ (assert (= 8 (alength bs)))
         bs (if (= (ByteOrder/nativeOrder)
                   ByteOrder/LITTLE_ENDIAN)
@@ -106,7 +108,7 @@
     (not (zero? num))))
 
 (defmethod read-bytes :avoption-type/uint64
-  [_ bs]
+  [_ ^byte/1 bs]
   (let [_ (assert (= 8 (alength bs)))
         bs (if (= (ByteOrder/nativeOrder)
                   ByteOrder/LITTLE_ENDIAN)
@@ -308,7 +310,7 @@
       :name (ch-layout->str p)
       :nb-channels (:nb_channels p)}
      (when (= :channel-order/native)
-       (let [bs (:u p)
+       (let [^byte/1 bs (:u p)
              _ (assert (= 8 (alength bs)))
              bs (if (= (ByteOrder/nativeOrder)
                        ByteOrder/LITTLE_ENDIAN)

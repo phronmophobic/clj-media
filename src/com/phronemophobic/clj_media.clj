@@ -14,6 +14,7 @@
    [com.phronemophobic.clj-media.impl.raw :as raw]
    [com.phronemophobic.clj-media.impl.av :as av]))
 
+(set! *warn-on-reflection* true)
 
 (def sample-formats
   "All possible sample formats."
@@ -174,7 +175,7 @@
   (transduce
    (comp
     (map mm/byte-buffer)
-    (map (fn [buf]
+    (map (fn [^java.nio.ByteBuffer buf]
            (let [bytes (byte-array (.capacity buf))]
              (.get buf bytes)
              bytes))))
