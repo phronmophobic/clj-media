@@ -65,6 +65,7 @@ There are many areas of improvement for clj-media.
 - The high level API currently is based on transforming media (collections of streams) rather than transforming individual streams. This is similar to python media libraries I've used worked, but I'm not sure working with media rather than streams is much easier except in the simplest cases.
 - The use case of playing audio/video is well supported. I'm imagining some sort of API that has `play`, `pause`, `stop` that can feed some process frames.
 - clj-media can only read compressed media from the filesystem. The FFmpeg API allows for other input sources which would be useful for loading media from memory or the network.
+- clj-media filters form a directed flow of frames with multiple sources and sinks. There's a particular set of requirements that were needed to execute the filter graph that I couldn't find an existing library to fulfill so I wrote my own adhoc implementation. The flow runner should either be replaced with a library or be extracted and documented.
 
 ## License
 
