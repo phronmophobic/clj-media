@@ -54,8 +54,8 @@
                    (Class/forName (name classname))
                    (catch ClassNotFoundException e
                      nil))]
-    (when-let [constructor (.getConstructor cls
-                                            (into-array Class []))]
+    (when-let [constructor (Class/.getConstructor cls
+                                                  (into-array Class []))]
       (.newInstance constructor (to-array [])))))
 
 (run! try-load
@@ -109,12 +109,13 @@
         @(requiring-resolve 'com.phronemophobic.clong.clang/default-arguments)
 
         header-files (->> lib-names
-                          (map #(str "lib" % "/" % ".h"))
-                          (map #(io/file "../FFmpeg/" %))
-                          (map #(.getCanonicalPath %)))
+                          (map #(->> (str "lib" % "/" % ".h")
+                                     (io/file "../FFmpeg/" )
+                                     .getCanonicalPath)))
         header-files (into header-files
-                           (comp (map #(io/file "../FFmpeg/" %))
-                                 (map #(.getCanonicalPath %)))
+                           (map #(->> %
+                                      (io/file "../FFmpeg/")
+                                      .getCanonicalPath))
                            ["libavfilter/buffersink.h"
                             "libavfilter/buffersrc.h"])
 
@@ -128,8 +129,7 @@
                               ["-include" h]))
                          (rest header-files))
         clang-args (into clang-args
-                         (comp (map io/file)
-                               (map #(.getParent %))
+                         (comp (map #(-> % io/file .getParent))
                                (distinct)
                                (map (fn [folder]
                                       (str "-I" folder))))
