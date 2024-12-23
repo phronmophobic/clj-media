@@ -66,6 +66,7 @@ There are many areas of improvement for clj-media.
 - The use case of playing audio/video is not well supported. I'm imagining some sort of API that has `play`, `pause`, `stop` that can feed (potentially filtered) frames to some process.
 - clj-media can only read compressed media from the filesystem. The FFmpeg API allows for other input sources which would be useful for loading media from memory or the network.
 - clj-media filters form a directed flow of frames with multiple sources and sinks. There's a particular set of requirements that were needed to execute the filter graph that I couldn't find an existing library to fulfill so I wrote my own adhoc implementation. The flow runner should either be replaced with a library or be extracted and documented.
+- clj-media manipulates a lot of off-heap memory. dtype-next is a helpful library for working with off-heap memory. Integrating dtype-next makes a lot of sense.
 
 ## License
 
