@@ -1,16 +1,27 @@
 (ns com.phronemophobic.clj-media.impl.skia
   (:require [membrane.ui :as ui]
-            
+            [membrane.component :as component
+             :refer [defui defeffect]]
             [membrane.skia :as skia]
-            [avclj :as avclj]
-            [avclj.av-codec-ids :as codec-ids]
+            [com.phronemophobic.clj-media :as clj-media]
+            [com.phronemophobic.clj-media.impl.av :as av]
+            [com.phronemophobic.clj-media.impl.video :as video]
+            [com.phronemophobic.clj-media.impl.audio :as audio]
+            [com.phronemophobic.clj-media.impl.raw :as raw]
+            [com.phronemophobic.clj-media.model :as mm]
+            [clojure.java.io :as io]
             ;; [tech.v3.tensor :as dtt]
             ;; [tech.v3.datatype.ffi :as dt-ffi]
             ;; [tech.v3.datatype :as dtype]
             ;; [tech.v3.libs.buffered-image :as bufimg]
             )
   (:import com.sun.jna.Pointer
-           com.sun.jna.Memory))
+           com.sun.jna.Memory
+           (javax.sound.sampled AudioFormat
+                                AudioFormat$Encoding
+                                DataLine$Info
+                                SourceDataLine
+                                AudioSystem)))
 
 
 (defn ^:private long->pointer [n]
@@ -45,67 +56,159 @@
       (when resource
         (skia_draw_surface skia/*skia-resource* resource)))))
 
+(defn draw-frame [resource frame]
+  (let [width (.readField frame "width")
+        height (.readField frame "height")
+        linesize (-> frame
+                     (.readField "linesize")
+                     (nth 0))
+        buf-ptr (-> frame
+                    (.readField "data")
+                    (nth 0)
+                    (.getPointer))]
+    (skia-bgra8888-draw resource
+                        buf-ptr
+                        width
+                        height
+                        linesize)))
+
 (defn play-video
   "Open a window and play the video found at `fname`."
-  [fname]
-  (avclj/initialize!)
-  (let [decoder
-        (avclj/make-video-decoder fname
-                                  {:output-pixfmt "AV_PIX_FMT_BGRA"})
-        natom (atom 0)
+  [fname dispatch! $video-state]
+  (let [
 
-        {:keys [width height]} (meta decoder)
-        {:keys [num den] :as time-base} (-> decoder meta :time-base )
+        input-context (av/open-context (.getAbsolutePath (io/file fname)))
+        decoder-context (av/find-decoder-context :video input-context)
+
+        ;; {:keys [width height]} (meta decoder)
+        width (.readField decoder-context "width")
+        height (.readField decoder-context "height")
+
+        time-base (.readField decoder-context "time_base")
+        num (.readField time-base "num")
+        den (.readField time-base "den")
         fps (/ num den)
+
+        xform (comp (av/decode-frame decoder-context)
+                    (video/transcode-frame decoder-context raw/AV_PIX_FMT_BGRA))
+        rf (xform (completing
+                   (fn [_ frame]
+                     frame)))
+
 
         buffer (Memory. (* height width 4))
         resource (skia-direct-bgra8888-buffer buffer width height (* width 4))
         draw-lock (Object.)
         video-view (map->VideoView
-                    {:n @natom
+                    {:n 0
                      :resource resource
                      :buffer buffer
                      :width width
                      :height height
                      :draw-lock draw-lock})
-        window-info (skia/run
-                      (fn []
-                        (assoc video-view
-                               :n @natom))
-                      {:window-start-width width
-                       :window-start-height height})
-        repaint (:membrane.skia/repaint window-info)
-        start-time (System/currentTimeMillis)]
+
+        audio-format (audio/default-stereo-format)
+        info (DataLine$Info. SourceDataLine
+                             audio-format)
+         source-data-line (^SourceDataLine AudioSystem/getLine info)
+         source-data-line (doto ^SourceDataLine source-data-line
+                            (.open audio-format)
+                            (.start))
+        running? (atom true)]
+    (dispatch! :set $video-state {:view video-view
+                                  :pause (fn []
+                                           (reset! running? false))
+                                  :cleanup (fn []
+                                             (reset! running? false))})
+
+    ;; audio
     (future
       (try
-        (loop [t 0]
-          (let [start-frame-time (System/currentTimeMillis)
-                frame-data (avclj/decode-frame! decoder)]
-            (when frame-data
-              (let [best-effort-timestamp (-> frame-data
-                                              meta
-                                              :best-effort-timestamp)
-                    sleep-ms (- (* 1000 fps best-effort-timestamp)
-                                (- (System/currentTimeMillis) start-time ))]
+        (let [media (clj-media/file fname)
+              bs (volatile! nil)]
+          (transduce
+           (comp (take-while (fn [_]
+                               @running?))
+                 (map com.phronemophobic.clj-media.impl.model/raw-frame)
+                 (map (fn [frame]
+                        (let [buf @bs
+                              linesize (-> frame :linesize first)
+                              buf (if (or (nil? buf)
+                                          (< (alength buf) linesize))
+                                    (vreset! bs (byte-array linesize))
+                                    buf)]
+                          (audio/frame->byte-array frame buf)))))
+           (fn
+             ([])
+             ([result]
+              (.drain source-data-line)
+              (.close source-data-line)
+              result)
+             ([result buf]
+              (.write source-data-line buf 0 (alength buf))
+              result))
+           nil
+           (clj-media/frames media :audio {:format (clj-media/audio-format
+                                                    {:channel-layout "stereo"
+                                                     :sample-rate 44100
+                                                     :sample-format :sample-format/s16})})))
+        (catch Throwable e
+          (prn e))
+        (finally
+          (println "quit audio"))))
 
-                (when (pos? sleep-ms)
-                  (Thread/sleep sleep-ms))
 
-                (locking draw-lock
-                  (skia-bgra8888-draw resource
-                                      (Pointer. (:data frame-data))
-                                      width
-                                      height
-                                      (:linesize frame-data)))
-                (swap! natom inc)
-                (repaint)
+    (future
+      (try
 
-                (recur best-effort-timestamp)))))
+        (loop []
+          (when @running?
+            (let [frame (loop []
+                          (let [packet (av/next-packet input-context)]
+                            (when (and @running? packet)
+                              (let [frame (rf nil packet)]
+                                (if frame
+                                  frame
+                                  (recur))))))]
+              (when frame
+                (let [best-effort-timestamp (.readField frame "best_effort_timestamp")
+                      sleep-ms (- (* 1000 fps best-effort-timestamp)
+                                  (quot (.getMicrosecondPosition source-data-line)
+                                        1000))]
+
+                  (when (pos? sleep-ms)
+                    (Thread/sleep (long sleep-ms)))
+
+                  (locking draw-lock
+                    (draw-frame resource frame))
+
+                  (when @running?
+                    (dispatch! :update $video-state
+                               (fn [vs]
+                                 (when vs
+                                   (update-in vs [:view :n] inc))))
+                    (dispatch! :repaint!))
+
+                  (recur))))))
         (catch Exception e
           (println e))
         (finally
-          (.close decoder))))))
+          (skia_cleanup resource)
+          (println "quit video"))))))
 
+(defui video-player [{:keys [path video-state]}]
+  (let [video-view (:view video-state)]
+    video-view))
+
+(defeffect ::play [{:keys [$video-state path]}]
+  (future
+    (play-video path dispatch! $video-state)))
+(defeffect ::pause [{:keys [video-state]}]
+  (when-let [pause (:pause video-state)]
+    (pause)))
+(defeffect ::cleanup [{:keys [video-state]}]
+  (when-let [cleanup (:cleanup video-state)]
+    (cleanup)))
 
 (comment
   (def encoder (avclj/make-video-encoder
@@ -119,7 +222,7 @@
   (def decoder (avclj/make-video-decoder "my-movie.mp4"))
   ,)
 
-(defn write-video
+#_(defn write-video
   "Save a video to `fname`.
 
   `fname`: A string path to where the video should be written.
@@ -168,7 +271,7 @@
         (avclj/encode-frame! encoder input-frame)))))
 
 
-(defn write-gif
+#_(defn write-gif
   "Save a gif to `fname`.
 
   `fname`: A string path to where the gif should be written.
@@ -201,7 +304,7 @@
   (play-video fname))
 
 (defn gen-test-video [& args]
-  (write-video "my-movie.mp4"
+  #_(write-video "my-movie.mp4"
                (map (fn [i]
                       (ui/padding 10 (ui/label (str "frame: " i))))
                     (range 120))
@@ -210,22 +313,14 @@
 
 (comment
 
-  ;; pretty sure the result creates bindings primarily for JNI
-  ;; 
-  (import 'org.bytedeco.javacpp.Loader)
+  (def input-context (av/open-context (.getAbsolutePath (io/file "foo.mp4"))))
 
-  (import 'org.bytedeco.ffmpeg.global.avcodec)
-  (import 'org.bytedeco.ffmpeg.global.avutil)
-  
-  (import 'org.bytedeco.ffmpeg.global.avcodec)
-  (import 'org.bytedeco.ffmpeg.global.avdevice)
-  (import 'org.bytedeco.ffmpeg.global.avfilter)
-  (import 'org.bytedeco.ffmpeg.global.avformat)
-  (import 'org.bytedeco.ffmpeg.global.avutil)
-  (import 'org.bytedeco.ffmpeg.global.postproc)
-  (import 'org.bytedeco.ffmpeg.global.swresample)
-  (import 'org.bytedeco.ffmpeg.global.swscale)
+  (def decoder-context (av/find-decoder-context :audio input-context))
 
-  (import 'org.bytedeco.ffmpeg.avcodec.AVHWAccel)
+  (av/codec-context-format decoder-context)
+  (audio/resample2 (av/codec-context-format decoder-context)
+                   ;;{:codec }
+                   )
   
+
   ,)
