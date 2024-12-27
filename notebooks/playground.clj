@@ -6,9 +6,22 @@
             [com.phronemophobic.clj-media.model :as mm]
 
             [com.phronemophobic.clj-media.impl.av :as av]
+            [com.phronemophobic.clj-media.impl.raw :as raw]
+            [com.phronemophobic.clj-media.impl.filter.media :as fm]
             [com.phronemophobic.clj-media.avfilter :as avfilter]))
 
 
-(defn -main [])
+(comment
+  (import 'java.awt.image.BufferedImage
+          'java.awt.Graphics2D
+          'java.awt.Color
+          'java.awt.RenderingHints
+          'javax.imageio.ImageIO)
+
+  (require '[membrane.java2d :as java2d]
+           '[membrane.ui :as ui])
+  ,)
+
+
 
 
