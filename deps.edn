@@ -15,7 +15,7 @@
               ]
    :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.13-beta"}
                 ;; com.phronemophobic/clong {:local/root "../clong"}
-                org.bytedeco/llvm-platform {:mvn/version "16.0.4-1.5.9"}
+                org.bytedeco/llvm-platform {:mvn/version "20.1.7-1.5.12"}
                 com.phronemophobic/membrane {:mvn/version "0.13.1-beta"
                                      ;; :local/root "../membrane2"
                                      }
