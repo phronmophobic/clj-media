@@ -229,7 +229,10 @@
 
                            err (avfilter_init_str buffer-context args)
                            _ (when (not (zero? err))
-                               (throw (Exception.)))]
+                               (throw
+                                (ex-info "Could not create audio filter"
+                                         {:error-code err
+                                          :error-msg (av/error->str err)})))]
                        buffer-context)))
               input-formats)
 
