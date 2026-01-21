@@ -72,13 +72,13 @@
 
 
 (def ^:private lib-versions
-  {"avutil" "avutil@.58"
-   "avfilter" "avfilter@.9"
-   "avformat" "avformat@.60"
-   "avdevice" "avdevice@.60"
-   "swresample" "swresample@.4"
-   "swscale" "swscale@.7"
-   "avcodec" "avcodec@.60"})
+  {"avutil" "avutil@.59"
+   "avfilter" "avfilter@.10"
+   "avformat" "avformat@.61"
+   "avdevice" "avdevice@.61"
+   "swresample" "swresample@.5"
+   "swscale" "swscale@.8"
+   "avcodec" "avcodec@.61"})
 
 (def ^:private lib-names ["avutil"
                           "avfilter"

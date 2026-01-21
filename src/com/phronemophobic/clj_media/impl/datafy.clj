@@ -24,7 +24,10 @@
       (throw (ex-info "Could not encode ch-layout."
                       {:ch-layout ch-layout
                        :err err})))
-    (String. (.getByteArray buf 0 err) "ascii")))
+    (String. (.getByteArray buf 0
+                            ;; size includes null terminator
+                            (dec err))
+             "ascii")))
 
 (defn str->ch-layout [s]
   (assert s "Invalid ch-layout.")
