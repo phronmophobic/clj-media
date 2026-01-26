@@ -2,17 +2,23 @@
   (:require [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
             [clojure.core.async :as async]
+            [tech.v3.tensor :as dtt]
+            [tech.v3.datatype.struct :as dt-struct]
+            [tech.v3.datatype :as dt]
+            [tech.v3.datatype.ffi :as dt-ffi]
+            [tech.v3.datatype.native-buffer :as native-buffer]
+            [tech.v3.datatype.casting :as dt-casting]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [clojure.pprint :refer [pprint]])
   (:import
-   com.sun.jna.Memory
-   com.sun.jna.Pointer
-   com.sun.jna.ptr.PointerByReference
-   com.sun.jna.ptr.IntByReference
-   com.sun.jna.ptr.LongByReference
-   com.sun.jna.ptr.ByteByReference
-   com.sun.jna.Structure
+   ;; com.sun.jna.Memory
+   ;; com.sun.jna.Pointer
+   ;; com.sun.jna.ptr.PointerByReference
+   ;; com.sun.jna.ptr.IntByReference
+   ;; com.sun.jna.ptr.LongByReference
+   ;; com.sun.jna.ptr.ByteByReference
+   ;; com.sun.jna.Structure
    java.io.ByteArrayOutputStream
 
    (javax.sound.sampled AudioFormat
@@ -32,8 +38,6 @@
 
    )
   (:gen-class))
-
-(raw/import-structs!)
 
 (defn pf [& args]
   (apply prn args)
@@ -217,20 +221,18 @@
                              (:nb_samples frame )
                              (:channels frame ))
                  buf (-> (nth (:data frame ) 0)
-                         (.getPointer )
-                         (.getByteArray 0 buf-size))]
+                         (native-buffer/wrap-address buf-size)
+                         (dt/->byte-array))]
              
              buf)))))
 
 (defn resample2 [input-format output-format]
-  (let [resample-ctx* (PointerByReference. Pointer/NULL)
+  (let [resample-ctx* (dt-ffi/make-ptr :pointer 0 )
         err (swr_alloc_set_opts2 resample-ctx*
-                                 (.getPointer
-                                    (:ch-layout output-format))
+                                 (:ch-layout output-format)
                                  (:sample-format output-format)
                                  (:sample-rate output-format)
-                                 (.getPointer
-                                  (:ch-layout input-format))
+                                 (:ch-layout input-format)
                                  (:sample-format input-format)
                                  (:sample-rate input-format)
                                  0
@@ -238,16 +240,16 @@
 
         _ (when (not (zero? err))
             (throw (Exception. "Could not initialize resample context")))
-        resample-ctx (.getValue resample-ctx*)
+        resample-ctx (dt-ffi/->pointer (nth resample-ctx* 0))
 
         err (swr_init resample-ctx)
         _ (when (neg? err)
             (throw (Exception. "Could not initialize resample context")))
-        resample-ctx-ptr (Pointer/nativeValue resample-ctx)
+
+        resample-ctx-ptr (nth resample-ctx* 0)
         _ (.register av/cleaner resample-ctx
                      (fn []
-                       (swr_free (doto (PointerByReference.)
-                                   (.setValue (Pointer. resample-ctx-ptr))) )))
+                       (swr_free resample-ctx-ptr )))
 
         bytes-per-sample (av_get_bytes_per_sample (:sample-format output-format))
         num-output-channels (-> output-format
@@ -267,22 +269,22 @@
         (let [{:keys [sample-format
                       sample-rate]}
               output-format
-              ch-layout (AVChannelLayout.)]
+              ch-layout (dt-struct/new-struct :AVChannelLayout {:container-type :native-heap})]
           ;; create out own copy since original copy may change :(
-          (av_channel_layout_copy (.getPointer ch-layout)
-                                  (.getPointer (:ch-layout output-format)))
+          (av_channel_layout_copy ch-layout
+                                  (:ch-layout output-format))
           (fn []
             (let [frame
-                  (doto (av/new-frame)
+                  (doto (av_frame_alloc)
                     ;; set to output-frame size
                     ;; for av_frame_get_buffer
-                    (.writeField "nb_samples" output-frame-size)
-                    (.writeField "format" sample-format)
-                    (.writeField "sample_rate" sample-rate))]
+                    (.put :nb_samples output-frame-size)
+                    (.put :format sample-format)
+                    (.put :sample_rate sample-rate))]
               (assert
                (zero? (av_channel_layout_copy
-                       (.getPointer (:ch_layout frame))
-                       (.getPointer ch-layout))))
+                       (:ch_layout frame)
+                       ch-layout)))
               (assert
                (>= (av_frame_get_buffer frame 0)
                    0))
@@ -291,13 +293,13 @@
               ;; we'll be using nb_samples to keep
               ;; track of how many samples we've collected
               ;; as we go.
-              (.writeField frame "nb_samples" (int 0))
+              (.put frame :nb_samples (int 0))
 
               frame)))
 
         output-frame* (volatile!
                        (new-output-frame))]
-    (assert (<= num-output-channels (alength (:data (AVFrame.)))))
+    ;; (assert (<= num-output-channels (alength (:data (AVFrame.)))))
     (fn [rf]
       (fn
         ([] (rf))
@@ -311,14 +313,21 @@
                  samples-wanted (- output-frame-size
                                    current-samples)
 
-                 data-ptr (into-array Pointer
-                                      (eduction
-                                       (map (fn [p]
-                                              (when p
-                                                (.share (.getPointer p)
-                                                        (* sample-offset-multiplier
-                                                           current-samples)))))
-                                       (:data output-frame)))
+                 ;; data-ptr (into-array Pointer
+                 ;;                      (eduction
+                 ;;                       (map (fn [p]
+                 ;;                              (when p
+                 ;;                                (.share (.getPointer p)
+                 ;;                                        (* sample-offset-multiplier
+                 ;;                                           current-samples)))))
+                 ;;                       (:data output-frame)))
+                 data-ptr (dt/make-container :native-heap :int64
+                                             (eduction
+                                              (map (fn [p]
+                                                     (when (not (zero? p))
+                                                       (+ p (* sample-offset-multiplier
+                                                               current-samples)))))
+                                              (:data output-frame)))
 
                  err (swr_convert resample-ctx
                                   data-ptr samples-wanted
@@ -329,7 +338,7 @@
 
              (if (pos? err)
                (let [total-samples (+ err current-samples)]
-                 (.writeField output-frame "nb_samples" (int total-samples))
+                 (.put output-frame :nb_samples (int total-samples))
                  (if (= total-samples output-frame-size)
                    (do
                      (vreset! output-frame* (new-output-frame))
@@ -345,14 +354,21 @@
                    samples-wanted (- output-frame-size
                                      current-samples)
 
-                   data-ptr (into-array Pointer
-                                        (eduction
-                                         (map (fn [p]
-                                                (when p
-                                                  (.share (.getPointer p)
-                                                          (* sample-offset-multiplier
-                                                             current-samples)))))
-                                         (:data output-frame)))
+                   ;; data-ptr (into-array Pointer
+                   ;;                      (eduction
+                   ;;                       (map (fn [p]
+                   ;;                              (when p
+                   ;;                                (.share (.getPointer p)
+                   ;;                                        (* sample-offset-multiplier
+                   ;;                                           current-samples)))))
+                   ;;                       (:data output-frame)))
+                   data-ptr (dt/make-container :native-heap :int64
+                                             (eduction
+                                              (map (fn [p]
+                                                     (when (not (zero? p))
+                                                       (+ p (* sample-offset-multiplier
+                                                               current-samples)))))
+                                              (:data output-frame)))
 
                    err (swr_convert resample-ctx
                                     data-ptr output-frame-size
@@ -366,7 +382,7 @@
 
                  (pos? err)
                  (let [total-samples (+ err current-samples)]
-                   (.writeField output-frame "nb_samples" (int total-samples))
+                   (.put output-frame :nb_samples (int total-samples))
                    (if (= total-samples output-frame-size)
                      (do
                        (vreset! output-frame* (new-output-frame))

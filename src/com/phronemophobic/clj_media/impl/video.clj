@@ -3,20 +3,27 @@
             [com.phronemophobic.clj-media.impl.av :as av]
             [com.phronemophobic.clj-media.impl.datafy
              :as datafy-media]
+            [tech.v3.tensor :as dtt ]
+            [tech.v3.datatype.struct :as dt-struct]
+            [tech.v3.datatype :as dt]
+            [tech.v3.datatype.ffi :as dt-ffi]
+            [tech.v3.datatype.native-buffer :as native-buffer]
+            [tech.v3.datatype.casting :as dt-casting]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [clojure.pprint :refer [pprint]])
   (:import
-   com.sun.jna.Memory
-   com.sun.jna.Pointer
+   ;; com.sun.jna.Memory
+   ;; com.sun.jna.Pointer
    java.awt.image.BufferedImage
-   com.sun.jna.ptr.PointerByReference
-   com.sun.jna.ptr.IntByReference
-   com.sun.jna.ptr.ByteByReference
-   com.sun.jna.Structure)
+   ;; com.sun.jna.ptr.PointerByReference
+   ;; com.sun.jna.ptr.IntByReference
+   ;; com.sun.jna.ptr.ByteByReference
+   ;com.sun.jna.Structure
+   )
   (:gen-class))
 
-(raw/import-structs!)
+;; (raw/import-structs!)
 
 (defn pf [& args]
   (apply prn args)
@@ -44,11 +51,11 @@
           err (avfilter_init_str buffer-context args)
           _ (when (not (zero? err))
               (throw (Exception.)))
-
+          
           buffersink (avfilter_get_by_name "buffersink")
           _ (when (nil? buffersink)
               (throw (Exception.)))
-          buffersink-context* (PointerByReference.)
+          buffersink-context* (dt-ffi/make-ptr :pointer 0)
           _ (avfilter_graph_create_filter buffersink-context*
                                           buffersink
                                           "sink"
@@ -56,10 +63,11 @@
                                           nil
                                           filter-graph)
 
-          buffersink-context (.getValue buffersink-context*)
+          buffersink-context (first buffersink-context*)
 
-          pix-fmts (doto (IntByReference.)
-                     (.setValue output-pix-fmt))
+          pix-fmts (dt-ffi/make-ptr :uint32 output-pix-fmt)
+          ;; (doto (IntByReference.)
+          ;;            (.setValue output-pix-fmt))
           _ (av_opt_set_bin buffersink-context "pix_fmts"
                             pix-fmts
                             (* 1 4)
@@ -77,14 +85,13 @@
          (rf))
         ([result]
          (avfilter_graph_free
-          (doto (PointerByReference.)
-            (.setValue (.getPointer filter-graph))))
+          (dt-ffi/make-ptr :pointer filter-graph))
          (rf result))
         ([result input-frame]
          (av_buffersrc_write_frame buffer-context
                                    input-frame)
          (loop [result result]
-           (let [frame (av/new-frame)
+           (let [frame (av_frame_alloc)
                  err (av_buffersink_get_frame_flags buffersink-context
                                                     frame
                                                     0)]
@@ -132,7 +139,7 @@
           buffersink (avfilter_get_by_name "buffersink")
           _ (when (nil? buffersink)
               (throw (Exception.)))
-          buffersink-context* (PointerByReference.)
+          buffersink-context* (dt-ffi/make-ptr :pointer 0 )
           _ (avfilter_graph_create_filter buffersink-context*
                                           buffersink
                                           "sink"
@@ -142,8 +149,7 @@
 
           buffersink-context (.getValue buffersink-context*)
 
-          pix-fmts (doto (IntByReference.)
-                     (.setValue pix-fmt))
+          pix-fmts (dt-ffi/make-ptr :uint32 pix-fmt)
           _ (av_opt_set_bin buffersink-context "pix_fmts"
                             pix-fmts
                             (* 1 4)
@@ -160,10 +166,12 @@
         ([]
          (rf))
         ([result]
-         (av_frame_free (doto (PointerByReference.)
+         (av_frame_free (dt-ffi/make-ptr :pointer frame)
+          #_(doto (PointerByReference.)
                           (.setValue (.getPointer frame))))
          (avfilter_graph_free
-          (doto (PointerByReference.)
+          (dt-ffi/make-ptr :pointer filter-graph)
+          #_(doto (PointerByReference.)
             (.setValue (.getPointer filter-graph))))
          (rf result))
         ([result input-frame]
@@ -207,32 +215,37 @@
    })
 
 
-
 (defn render-frame
   "Writes an AVFrame into a BufferedImage. Assumes :byte-bgr image format."
   [img frame]
   (let [
-        width (.readField frame "width")
-        height (.readField frame "height")
-        linesize (-> frame
-                     (.readField "linesize")
-                     (nth 0))
-        buf-ptr (-> frame
-                    (.readField "data")
-                    (nth 0)
-                    (.getPointer))
+        width (:width frame)
+        height (:height frame)
+        linesize (nth (:linesize frame) 0)
+        buf-addr (nth (:data frame) 0)
 
-        get-buf
-        (condp contains? (.getType img)
-          #{BufferedImage/TYPE_3BYTE_BGR
-            BufferedImage/TYPE_4BYTE_ABGR} (fn [y] (.getByteArray buf-ptr (* linesize y) linesize))
-          #{BufferedImage/TYPE_USHORT_555_RGB
-            BufferedImage/TYPE_USHORT_565_RGB} (fn [y] (.getShortArray buf-ptr (* linesize y) (/ linesize 2))))]
+        dtype (condp contains? (.getType img)
+                #{BufferedImage/TYPE_3BYTE_BGR
+                  BufferedImage/TYPE_4BYTE_ABGR} :int8
+                
+                #{BufferedImage/TYPE_USHORT_555_RGB
+                  BufferedImage/TYPE_USHORT_565_RGB} :int16)
+        
+
+        data (-> (native-buffer/wrap-address buf-addr (* linesize height))
+                 (dtt/reshape [height linesize]))
+        
+        row-bytes (* width (dt-casting/numeric-byte-width dtype))
+        temp-buf (byte-array row-bytes)
+
+        ]
 
     (with-tile [wraster img]
       (doseq [y (range height)]
+        (dt/copy! (dtt/select (nth data y) (range row-bytes))
+                  temp-buf)
         (.setDataElements wraster 0 y width 1
-                          (get-buf y))))))
+                          temp-buf)))))
 
 (defn frame->img [frame]
   (let [format (pixel-format->buffered-image-format (:format frame))
@@ -273,7 +286,7 @@
          _ (sws_init_context sws-ctx nil nil)
          _ (when (nil? sws-ctx)
              (throw (Exception. "Error creating sws context.")))
-         sws-ctx-ptr (Pointer/nativeValue sws-ctx)
+         sws-ctx-ptr (-> sws-ctx dt-ffi/->pointer .address)
          _ (.register av/cleaner sws-ctx
                       (fn []
                         (sws_freeContext sws-ctx-ptr)))]
@@ -283,11 +296,11 @@
          ([result] (rf result))
          ([result input-frame]
           (if input-frame
-            (let [output-frame (av/new-frame)
+            (let [output-frame (av_frame_alloc)
                   err (sws_scale_frame sws-ctx output-frame input-frame)]
               (when (neg? err)
                 (throw (Exception. "Error scaling frame.")))
-              (.writeField output-frame "pts" (:pts input-frame))
+              (.put output-frame :pts (:pts input-frame))
               (rf result output-frame))
             ;; else nothing to do
             result)))))))

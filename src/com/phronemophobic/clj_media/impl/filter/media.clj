@@ -14,25 +14,34 @@
             [com.phronemophobic.clj-media.impl.av :as av]
             [com.phronemophobic.clj-media.impl.audio :as audio]
             [com.phronemophobic.clj-media.impl.video :as video]
+            [tech.v3.tensor :as dtt ]
+            [tech.v3.datatype.struct :as dt-struct]
+            [tech.v3.datatype :as dt]
+            [tech.v3.datatype.ffi :as dt-ffi]
+            [tech.v3.datatype.native-buffer :as native-buffer]
+            [tech.v3.datatype.casting :as dt-casting]
             loom.alg
             loom.graph
             [com.phronemophobic.clj-media.impl.util
              :refer [distinct-by
                      insert-last]
              :as media-util]
+            [clojure.core.async.flow :as flow]
+            [clojure.core.async :as async]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all])
   (:import
    java.io.PushbackReader
-   com.sun.jna.Memory
-   com.sun.jna.Pointer
-   com.sun.jna.ptr.PointerByReference
-   com.sun.jna.ptr.IntByReference
-   com.sun.jna.ptr.ByteByReference
+   ;; com.sun.jna.Memory
+   ;; com.sun.jna.Pointer
+   ;; com.sun.jna.ptr.PointerByReference
+   ;; com.sun.jna.ptr.IntByReference
+   ;; com.sun.jna.ptr.ByteByReference
+   ;; com.sun.jna.Structure
    java.lang.ref.Cleaner
-   com.sun.jna.Structure))
+   ))
 
-(raw/import-structs!)
+
 
 (defprotocol IComputeNode
   (configure! [this input-ports]))
@@ -124,7 +133,8 @@
           (into []
                 (comp
                  (map (fn [stream]
-                        (Structure/newInstance AVStreamByReference
+                        (dt-ffi/ptr->struct :AVStream stream)
+                        #_(Structure/newInstance AVStreamByReference
                                                stream)))
                  (remove (fn [stream+]
                            (contains? #{AVMEDIA_TYPE_VIDEO
@@ -144,7 +154,8 @@
           (into []
                 (comp
                  (map (fn [stream]
-                        (Structure/newInstance AVStreamByReference
+                        (dt-ffi/ptr->struct :AVStream stream)
+                        #_(Structure/newInstance AVStreamByReference
                                                stream)))
                  (filter (fn [stream+]
                            (contains? #{AVMEDIA_TYPE_VIDEO
@@ -266,7 +277,8 @@
                      done?))]
           cleaners [(fn []
                       (av_packet_free
-                       (PointerByReference. (.getPointer packet))))]]
+                       (dt-ffi/make-ptr :pointer packet)
+                       #_(PointerByReference. (.getPointer packet))))]]
       {:ports (into []
                     cat
                     [frame-ports
@@ -280,80 +292,81 @@
   (-media-inputs [this]
     nil)
   (-media [this]
-    (let [format-context (av/open-context fname)
-          err (avformat_find_stream_info format-context nil)
-          _ (when (not (zero? err))
-              (throw (ex-info "Could not find stream info."
-                              {:error-code err})))
-          num-streams (:nb_streams format-context)
-          streams (.getPointerArray
-                   (.readField format-context "streams")
-                   0 num-streams)
-          packets (sequence
-                   av/read-frame
-                   [format-context])]
-      (into []
-            (comp
-             (map (fn [stream]
-                    (let [stream+ (Structure/newInstance AVStreamByReference
-                                                         stream)
-                          stream-index (:index stream+)
+    ;; (let [format-context (av/open-context fname)
+    ;;       err (avformat_find_stream_info format-context nil)
+    ;;       _ (when (not (zero? err))
+    ;;           (throw (ex-info "Could not find stream info."
+    ;;                           {:error-code err})))
+    ;;       num-streams (:nb_streams format-context)
+    ;;       streams (.getPointerArray
+    ;;                (.readField format-context "streams")
+    ;;                0 num-streams)
+    ;;       packets (sequence
+    ;;                av/read-frame
+    ;;                [format-context])]
+    ;;   (into []
+    ;;         (comp
+    ;;          (map (fn [stream]
+    ;;                 (let [stream+ (Structure/newInstance AVStreamByReference
+    ;;                                                      stream)
+    ;;                       stream-index (:index stream+)
 
-                          codec-parameters (:codecpar stream+)
-                          codec-id (:codec_id codec-parameters)
-                          decoder (avcodec_find_decoder codec-id)
-                          _ (when (nil? decoder)
-                              (throw (ex-info "Could not find decoder"
-                                              {:codec-id codec-id})))
-                          decoder-context (avcodec_alloc_context3 (.getPointer decoder))
+    ;;                       codec-parameters (:codecpar stream+)
+    ;;                       codec-id (:codec_id codec-parameters)
+    ;;                       decoder (avcodec_find_decoder codec-id)
+    ;;                       _ (when (nil? decoder)
+    ;;                           (throw (ex-info "Could not find decoder"
+    ;;                                           {:codec-id codec-id})))
+    ;;                       decoder-context (avcodec_alloc_context3 (.getPointer decoder))
 
-                          _ (when (nil? decoder-context)
-                              (throw (ex-info "Could not allocate decoder"
-                                              {})))
-                          _ (doto decoder-context
-                              (.writeField "time_base"
-                                           (.readField stream+ "time_base")))
+    ;;                       _ (when (nil? decoder-context)
+    ;;                           (throw (ex-info "Could not allocate decoder"
+    ;;                                           {})))
+    ;;                       _ (doto decoder-context
+    ;;                           (.writeField "time_base"
+    ;;                                        (.readField stream+ "time_base")))
 
-                          _ (avcodec_parameters_to_context decoder-context codec-parameters)
-                          err (avcodec_open2 decoder-context decoder nil)
-                          _ (when (neg? err)
-                              (throw (Exception. "Could not open codec"
-                                                 {:error-code err})))
+    ;;                       _ (avcodec_parameters_to_context decoder-context codec-parameters)
+    ;;                       err (avcodec_open2 decoder-context decoder nil)
+    ;;                       _ (when (neg? err)
+    ;;                           (throw (Exception. "Could not open codec"
+    ;;                                              {:error-code err})))
 
-                          format (merge {:time-base (:time_base stream+)}
-                                        (av/codec-context-format decoder-context))
+    ;;                       format (merge {:time-base (:time_base stream+)}
+    ;;                                     (av/codec-context-format decoder-context))
 
-                          time-base (condp = (:codec_type decoder-context)
-                                      AVMEDIA_TYPE_AUDIO [1 (:sample-rate format)]
-                                      AVMEDIA_TYPE_VIDEO (let [tb (:time_base stream+)]
-                                                           [(:num tb) (:den tb)]))
-                          format (assoc format
-                                        :time-base
-                                        (av/->avrational (first time-base)
-                                                         (second time-base)))
+    ;;                       time-base (condp = (:codec_type decoder-context)
+    ;;                                   AVMEDIA_TYPE_AUDIO [1 (:sample-rate format)]
+    ;;                                   AVMEDIA_TYPE_VIDEO (let [tb (:time_base stream+)]
+    ;;                                                        [(:num tb) (:den tb)]))
+    ;;                       format (assoc format
+    ;;                                     :time-base
+    ;;                                     (av/->avrational (first time-base)
+    ;;                                                      (second time-base)))
 
-                          ;; do not share time base
-                          ;; with format.
-                          time-base (av/->avrational (first time-base)
-                                                     (second time-base))
-                          frames (sequence
-                                  (comp (filter (fn [packet]
-                                                  (= (:stream_index packet)
-                                                     stream-index)))
-                                        (insert-last nil)
-                                        (av/decode-frame decoder-context)
-                                        (map (fn [frame]
-                                               (doto frame
-                                                 (.writeField "time_base"
-                                                              time-base)))))
-                                  packets)]
-                      (frame-source frames format
-                                    nil
-                                    (str fname ": " stream-index " "
-                                         (condp = (:codec_type decoder-context)
-                                           AVMEDIA_TYPE_AUDIO "audio"
-                                           AVMEDIA_TYPE_VIDEO "video")))))))
-            streams))))
+    ;;                       ;; do not share time base
+    ;;                       ;; with format.
+    ;;                       time-base (av/->avrational (first time-base)
+    ;;                                                  (second time-base))
+    ;;                       frames (sequence
+    ;;                               (comp (filter (fn [packet]
+    ;;                                               (= (:stream_index packet)
+    ;;                                                  stream-index)))
+    ;;                                     (insert-last nil)
+    ;;                                     (av/decode-frame decoder-context)
+    ;;                                     (map (fn [frame]
+    ;;                                            (doto frame
+    ;;                                              (.writeField "time_base"
+    ;;                                                           time-base)))))
+    ;;                               packets)]
+    ;;                   (frame-source frames format
+    ;;                                 nil
+    ;;                                 (str fname ": " stream-index " "
+    ;;                                      (condp = (:codec_type decoder-context)
+    ;;                                        AVMEDIA_TYPE_AUDIO "audio"
+    ;;                                        AVMEDIA_TYPE_VIDEO "video")))))))
+    ;;         streams))
+))
 (defn media-file [f]
   (->MediaFile
    (.getCanonicalPath (io/as-file f))))
@@ -446,8 +459,8 @@
       (video/transcode-frame3 input-format (:pixel-format output-format)))))
 
 (defn default-channel-layout []
-  (let [channel-layout (AVChannelLayoutByReference.)
-        err (raw/av_channel_layout_from_string channel-layout "stereo")]
+  (let [channel-layout (dt-struct/new-struct :AVChannelLayout {:container-type :native-heap})
+        err (raw/av_channel_layout_from_string channel-layout (dt-ffi/string->c "stereo"))]
     (assert (zero? err))
     channel-layout))
 
@@ -546,130 +559,131 @@
     [media])
   IComputeNode
     (configure! [this input-ports]
-      (let [output-format-context (av/open-output-context fname)
+     ;;  (let [output-format-context (av/open-output-context fname)
 
-            encoders
-            (into []
-                  (comp
-                   (filter #(not= ::packet
-                                  (:format %)))
-                   (map (fn [port]
-                          (let [input-format (:format port)
+     ;;        encoders
+     ;;        (into []
+     ;;              (comp
+     ;;               (filter #(not= ::packet
+     ;;                              (:format %)))
+     ;;               (map (fn [port]
+     ;;                      (let [input-format (:format port)
 
-                                output-format
-                                (cond
-                                  (and (= :media-type/audio
-                                          (:media-type input-format))
-                                       (:audio-format opts))
-                                  (let [{:keys [audio-format]} opts]
-                                    (assert (:channel-layout audio-format) "Audio format must have `:channel-layout.`")
-                                    (assert (:sample-format audio-format) "Audio format must have `:sample-audio-format.`")
-                                    (assert (:sample-rate audio-format) "Audio format must have `:sample-rate`.")
-                                    (assert (:id (:codec audio-format)) "Audio format must have `{:codec {:id codec-id}}`.")
-                                    (merge
-                                     (select-keys input-format
-                                                  [:time-base])
-                                     (datafy-media/map->format audio-format
-                                                               :media-type/audio)))
+     ;;                            output-format
+     ;;                            (cond
+     ;;                              (and (= :media-type/audio
+     ;;                                      (:media-type input-format))
+     ;;                                   (:audio-format opts))
+     ;;                              (let [{:keys [audio-format]} opts]
+     ;;                                (assert (:channel-layout audio-format) "Audio format must have `:channel-layout.`")
+     ;;                                (assert (:sample-format audio-format) "Audio format must have `:sample-audio-format.`")
+     ;;                                (assert (:sample-rate audio-format) "Audio format must have `:sample-rate`.")
+     ;;                                (assert (:id (:codec audio-format)) "Audio format must have `{:codec {:id codec-id}}`.")
+     ;;                                (merge
+     ;;                                 (select-keys input-format
+     ;;                                              [:time-base])
+     ;;                                 (datafy-media/map->format audio-format
+     ;;                                                           :media-type/audio)))
 
-                                  (and (= :media-type/video
-                                          (:media-type input-format))
-                                       (:video-format opts))
-                                  (let [video-format (:video-format opts)]
-                                    (assert (:pixel-format video-format) "Video format must have `:pixel-format`.")
-                                    (assert (:id (:codec video-format)) "Video format must have `{:codec {:id codec-id}}`.")
-                                    (merge
-                                     (select-keys input-format
-                                                  [:width :height :time-base])
-                                     (datafy-media/map->format video-format
-                                                               :media-type/video)))
+     ;;                              (and (= :media-type/video
+     ;;                                      (:media-type input-format))
+     ;;                                   (:video-format opts))
+     ;;                              (let [video-format (:video-format opts)]
+     ;;                                (assert (:pixel-format video-format) "Video format must have `:pixel-format`.")
+     ;;                                (assert (:id (:codec video-format)) "Video format must have `{:codec {:id codec-id}}`.")
+     ;;                                (merge
+     ;;                                 (select-keys input-format
+     ;;                                              [:width :height :time-base])
+     ;;                                 (datafy-media/map->format video-format
+     ;;                                                           :media-type/video)))
 
-                                  :else
-                                  (pick-output-format
-                                   fname
-                                   (Structure/newInstance AVOutputFormatByReference
-                                                          (:oformat output-format-context))
-                                   input-format))
+     ;;                              :else
+     ;;                              (pick-output-format
+     ;;                               fname
+     ;;                               (Structure/newInstance AVOutputFormatByReference
+     ;;                                                      (:oformat output-format-context))
+     ;;                               input-format))
 
-                                encoder-context (av/encoder-context output-format)
+     ;;                            encoder-context (av/encoder-context output-format)
 
-                                stream (av/add-stream output-format-context encoder-context)
-                                stream-index (:index stream)
+     ;;                            stream (av/add-stream output-format-context encoder-context)
+     ;;                            stream-index (:index stream)
 
-                                output-format
-                                (if (= :media-type/audio
-                                       (:media-type input-format))
-                                  (assoc output-format
-                                         :frame-size (:frame_size encoder-context))
-                                  output-format)
+     ;;                            output-format
+     ;;                            (if (= :media-type/audio
+     ;;                                   (:media-type input-format))
+     ;;                              (assoc output-format
+     ;;                                     :frame-size (:frame_size encoder-context))
+     ;;                              output-format)
 
-                                port-id [(:id port) :packets]]
-                            {:encoder-context encoder-context
-                             :stream stream
-                             :input-port port
-                             :port-id port-id
-                             :stream-index stream-index
-                             :input-format input-format
-                             :output-format output-format}))))
-                  input-ports)
-            subscriptions
-            (into {}
-                  (map (fn [{:keys [encoder-context
-                                    stream
-                                    input-port
-                                    port-id
-                                    stream-index
-                                    input-format
-                                    output-format]}]
-                         (let [xf (comp (insert-last nil)
-                                        (auto-format2 input-format
-                                                      output-format)
-                                        (if (= :media-type/audio
-                                               (:media-type output-format))
-                                          (audio-pts)
-                                          identity)
-                                        (insert-last nil)
-                                        (av/encode-frame encoder-context)
-                                        (if (= :media-type/video
-                                               (:media-type output-format))
-                                          (map (fn [packet]
-                                                 (let [{:keys [duration pts]} packet]
-                                                   (.writeField packet "time_base" (:time_base stream))
-                                                   (av_packet_rescale_ts packet
-                                                                         (:time-base input-format)
-                                                                         (:time_base stream)))
-                                                 packet))
-                                          ;; we set the pts via audio-pts already
-                                          identity)
-                                        (map (fn [packet]
-                                               (doto packet
-                                                 (.writeField "stream_index" stream-index))))
+     ;;                            port-id [(:id port) :packets]]
+     ;;                        {:encoder-context encoder-context
+     ;;                         :stream stream
+     ;;                         :input-port port
+     ;;                         :port-id port-id
+     ;;                         :stream-index stream-index
+     ;;                         :input-format input-format
+     ;;                         :output-format output-format}))))
+     ;;              input-ports)
+     ;;        subscriptions
+     ;;        (into {}
+     ;;              (map (fn [{:keys [encoder-context
+     ;;                                stream
+     ;;                                input-port
+     ;;                                port-id
+     ;;                                stream-index
+     ;;                                input-format
+     ;;                                output-format]}]
+     ;;                     (let [xf (comp (insert-last nil)
+     ;;                                    (auto-format2 input-format
+     ;;                                                  output-format)
+     ;;                                    (if (= :media-type/audio
+     ;;                                           (:media-type output-format))
+     ;;                                      (audio-pts)
+     ;;                                      identity)
+     ;;                                    (insert-last nil)
+     ;;                                    (av/encode-frame encoder-context)
+     ;;                                    (if (= :media-type/video
+     ;;                                           (:media-type output-format))
+     ;;                                      (map (fn [packet]
+     ;;                                             (let [{:keys [duration pts]} packet]
+     ;;                                               (.writeField packet "time_base" (:time_base stream))
+     ;;                                               (av_packet_rescale_ts packet
+     ;;                                                                     (:time-base input-format)
+     ;;                                                                     (:time_base stream)))
+     ;;                                             packet))
+     ;;                                      ;; we set the pts via audio-pts already
+     ;;                                      identity)
+     ;;                                    (map (fn [packet]
+     ;;                                           (doto packet
+     ;;                                             (.writeField "stream_index" stream-index))))
 
-                                        )
-                               rf (xf
-                                   (av/write-packet2 output-format-context))]
-                           [(:id input-port)
-                            rf])))
-                  encoders)]
-     ;; need to write header before creating streams
-     ;; sets time_base in streams
-     (let [err (avformat_write_header output-format-context nil)]
-       (when (neg? err)
-         (throw (Exception.)))
-       err)
+     ;;                                    )
+     ;;                           rf (xf
+     ;;                               (av/write-packet2 output-format-context))]
+     ;;                       [(:id input-port)
+     ;;                        rf])))
+     ;;              encoders)]
+     ;; ;; need to write header before creating streams
+     ;; ;; sets time_base in streams
+     ;; (let [err (avformat_write_header output-format-context nil)]
+     ;;   (when (neg? err)
+     ;;     (throw (Exception.)))
+     ;;   err)
 
-     {:subscriptions subscriptions
-      :cleaners
-      [(fn []
-         (let [err (av_write_trailer output-format-context)]
-           (when (neg? err)
-             (throw (Exception.)))
-           err)
+     ;; {:subscriptions subscriptions
+     ;;  :cleaners
+     ;;  [(fn []
+     ;;     (let [err (av_write_trailer output-format-context)]
+     ;;       (when (neg? err)
+     ;;         (throw (Exception.)))
+     ;;       err)
 
-         (avio_closep (doto (PointerByReference.)
-                        (.setValue (:pb output-format-context))))
-         (avformat_free_context output-format-context)
-         nil)]})))
+     ;;     (avio_closep (doto (PointerByReference.)
+     ;;                    (.setValue (:pb output-format-context))))
+     ;;     (avformat_free_context output-format-context)
+     ;;     nil)]})
+))
 
 (defn filter-audio [media]
   (reify
@@ -969,7 +983,6 @@
         (doseq [cleaner (:cleaners cg)]
           (cleaner)))))
   nil)
-
 
 (defn write!
   ([media fname])

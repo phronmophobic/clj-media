@@ -3,6 +3,10 @@
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
             [clojure.datafy :as d]
+            [tech.v3.datatype.struct :as dt-struct]
+            [tech.v3.datatype :as dt]
+            [tech.v3.datatype.ffi :as dt-ffi]
+            [tech.v3.datatype.native-buffer :as native-buffer]
             [com.phronemophobic.clj-media.impl.datafy
              :as datafy-media]
             [clojure.edn :as edn]
@@ -12,17 +16,18 @@
             [com.rpl.specter :as specter])
   (:import
    java.io.PushbackReader
-   com.sun.jna.Memory
-   com.sun.jna.Pointer
-   com.sun.jna.ptr.PointerByReference
-   com.sun.jna.ptr.IntByReference
-   com.sun.jna.ptr.ByteByReference
+   ;; com.sun.jna.Memory
+   ;; com.sun.jna.Pointer
+   ;; com.sun.jna.ptr.PointerByReference
+   ;; com.sun.jna.ptr.IntByReference
+   ;; com.sun.jna.ptr.ByteByReference
    java.nio.ByteOrder
    java.lang.ref.Cleaner
-   com.sun.jna.Structure)
+   ;; com.sun.jna.Structure
+)
   (:gen-class))
 
-(raw/import-structs!)
+;; (raw/import-structs!)
 
 (def cleaner (Cleaner/create))
 
@@ -32,22 +37,16 @@
   o)
 
 (defn ->avrational [num den]
-  (doto (AVRational.)
+  (datafy-media/->avrational num den)
+  #_(doto (AVRational.)
     (.writeField "num" (int num))
     (.writeField "den" (int den))))
 
 
 (defn error->str [err]
-  (let [buf (byte-array 255)]
-    (av_strerror err buf (alength buf))
-    (let [s (String. buf 0 (transduce
-                            (take-while #(not (zero? %)))
-                            (completing
-                             (fn [cnt _]
-                               (inc cnt)))
-                            0
-                            buf))]
-      s)))
+  (let [buf (native-buffer/malloc 256)]
+    (av_strerror err buf (native-buffer/native-buffer-byte-len buf))
+    (dt-ffi/c->string buf)))
 
 
 (defn eof? [err]
@@ -60,252 +59,252 @@
 
 
 
-(defn next-packet [ctx]
-  (let [packet (av_packet_alloc)
-        ptr (Pointer/nativeValue (.getPointer packet))]
-    (.register cleaner packet
-               (fn []
-                 (av_packet_free
-                  (doto (PointerByReference.)
-                    (.setValue (Pointer. ptr))))))
-    (let [err (av_read_frame (.getPointer ctx) packet)
-            result (cond
-                     (zero? err)
-                     packet
+;; (defn next-packet [ctx]
+;;   (let [packet (av_packet_alloc)
+;;         ptr (Pointer/nativeValue (.getPointer packet))]
+;;     (.register cleaner packet
+;;                (fn []
+;;                  (av_packet_free
+;;                   (doto (PointerByReference.)
+;;                     (.setValue (Pointer. ptr))))))
+;;     (let [err (av_read_frame (.getPointer ctx) packet)
+;;             result (cond
+;;                      (zero? err)
+;;                      packet
 
-                     (eof? err)
-                     nil
+;;                      (eof? err)
+;;                      nil
 
-                     :else ;; some other error
-                     (throw (ex-info "Error reading packet"
-                                     {:error-code err
-                                      :type :read-error})))]
-        result)))
+;;                      :else ;; some other error
+;;                      (throw (ex-info "Error reading packet"
+;;                                      {:error-code err
+;;                                       :type :read-error})))]
+;;         result)))
 
-(defn packet-seq [ctx]
-  (when-let [packet (next-packet ctx)]
-    (cons packet (lazy-seq (packet-seq ctx)))))
+;; (defn packet-seq [ctx]
+;;   (when-let [packet (next-packet ctx)]
+;;     (cons packet (lazy-seq (packet-seq ctx)))))
 
 ;; doesn't work
 ;; because it doesn't implement valAt
 ;; for underlying frame struct
-(defrecord Frame+ [frame]
-  com.sun.jna.NativeMapped
-  (nativeType [_]
-    Pointer)
-  (toNative [_]
-    (.toNative frame)))
+;; (defrecord Frame+ [frame]
+;;   com.sun.jna.NativeMapped
+;;   (nativeType [_]
+;;     Pointer)
+;;   (toNative [_]
+;;     (.toNative frame)))
 
-(defn new-frame []
-  (let [frame (av_frame_alloc)
-        ptr (Pointer/nativeValue (.getPointer frame))]
-    (.register cleaner frame
-               (fn []
-                 (let [pointer (Pointer. ptr)]
-                   ;; av_frame_free also calls unref
-                   ;; but this is what the examples do
-                   (av_frame_unref pointer)
-                   (av_frame_free
-                    (doto (PointerByReference.)
-                      (.setValue pointer))))))
-    frame))
+;; (defn new-frame []
+;;   (let [frame (av_frame_alloc)
+;;         ptr (Pointer/nativeValue (.getPointer frame))]
+;;     (.register cleaner frame
+;;                (fn []
+;;                  (let [pointer (Pointer. ptr)]
+;;                    ;; av_frame_free also calls unref
+;;                    ;; but this is what the examples do
+;;                    (av_frame_unref pointer)
+;;                    (av_frame_free
+;;                     (doto (PointerByReference.)
+;;                       (.setValue pointer))))))
+;;     frame))
 
-(defn new-packet[]
-  (let [packet (av_packet_alloc)
-        ptr (Pointer/nativeValue (.getPointer packet))]
-    (.register cleaner packet
-               (fn []
-                 (let [pointer (Pointer. ptr)]
-                   ;; av_frame_free also calls unref
-                   ;; but this is what the examples do
-                   (av_packet_unref pointer)
-                   (av_packet_free
-                    (doto (PointerByReference.)
-                      (.setValue pointer))))))
-    packet))
+;; (defn new-packet[]
+;;   (let [packet (av_packet_alloc)
+;;         ptr (Pointer/nativeValue (.getPointer packet))]
+;;     (.register cleaner packet
+;;                (fn []
+;;                  (let [pointer (Pointer. ptr)]
+;;                    ;; av_frame_free also calls unref
+;;                    ;; but this is what the examples do
+;;                    (av_packet_unref pointer)
+;;                    (av_packet_free
+;;                     (doto (PointerByReference.)
+;;                       (.setValue pointer))))))
+;;     packet))
 
 ;; shouldn't be a transducer
 ;; instead. should return an IReduceInit
-(defn read-frame [rf]
-  (fn
-    ([] (rf))
-    ([result] (rf result))
-    ([result format-context]
-     (loop [result result]
-       (let [packet (new-packet)
-             err (av_read_frame (.getPointer format-context) packet)
-             result (cond
-                      (zero? err)
-                      (rf result packet)
+;; (defn read-frame [rf]
+;;   (fn
+;;     ([] (rf))
+;;     ([result] (rf result))
+;;     ([result format-context]
+;;      (loop [result result]
+;;        (let [packet (new-packet)
+;;              err (av_read_frame (.getPointer format-context) packet)
+;;              result (cond
+;;                       (zero? err)
+;;                       (rf result packet)
 
-                      (eof? err)
-                      (ensure-reduced
-                       (rf result packet))
+;;                       (eof? err)
+;;                       (ensure-reduced
+;;                        (rf result packet))
 
-                      :else ;; some other error
-                      (reduced {:error-code err
-                                :type :read-error}))]
-         (if (reduced? result)
-           result
-           (recur result)))))))
-
-
-
-(defn decode-frame [decoder-context]
-  (fn [rf]
-    (fn
-      ([] (rf))
-      ([result] (rf result))
-      ([result packet]
-       (let [err (avcodec_send_packet decoder-context packet)
-             result
-             (if (and (not (zero? err))
-                      (not= err -22)
-                      (eagain? err))
-               (reduced {:error-code err
-                         :type :send-packet-failure})
-               (loop [result result]
-                 (let [frame (new-frame)
-                       err (avcodec_receive_frame decoder-context frame)]
-                   (cond
-                     (or (zero? err)
-                         (einvalid? err))
-                     (let [result (rf result frame)]
-                       (if (reduced? result)
-                         result
-                         (recur result)))
-
-                     (eagain? err)
-                     result
-
-                     (eof? err)
-                     (reduced result)
-
-                     ;; some other error
-                     :else
-                     (reduced {:error-code err
-                               :error-msg (error->str err)
-                               :type :decode-error})))))]
-         result)))))
+;;                       :else ;; some other error
+;;                       (reduced {:error-code err
+;;                                 :type :read-error}))]
+;;          (if (reduced? result)
+;;            result
+;;            (recur result)))))))
 
 
-(defn encode-frame [encoder-context]
-  (fn [rf]
-    (fn
-      ([] (rf))
-      ;; needs to send empty frame here and receive packets again.
-      ([result] (rf result))
-      ([result frame]
-       (let [err (avcodec_send_frame encoder-context frame)
-             result
-             (if (and (not (zero? err))
-                      (not= err -22)
-                      (eagain? err))
-               (reduced {:error-code err
-                         :type :send-packet-failure})
-               (loop [result result]
-                 (let [packet (new-packet)
-                       err (avcodec_receive_packet encoder-context packet)]
-                   (cond
-                     (or (zero? err)
-                         (einvalid? err))
-                     (let [result (rf result packet)]
-                       (if (reduced? result)
-                         result
-                         (recur result)))
 
-                     (eagain? err)
-                     result
+;; (defn decode-frame [decoder-context]
+;;   (fn [rf]
+;;     (fn
+;;       ([] (rf))
+;;       ([result] (rf result))
+;;       ([result packet]
+;;        (let [err (avcodec_send_packet decoder-context packet)
+;;              result
+;;              (if (and (not (zero? err))
+;;                       (not= err -22)
+;;                       (eagain? err))
+;;                (reduced {:error-code err
+;;                          :type :send-packet-failure})
+;;                (loop [result result]
+;;                  (let [frame (new-frame)
+;;                        err (avcodec_receive_frame decoder-context frame)]
+;;                    (cond
+;;                      (or (zero? err)
+;;                          (einvalid? err))
+;;                      (let [result (rf result frame)]
+;;                        (if (reduced? result)
+;;                          result
+;;                          (recur result)))
 
-                     (eof? err)
-                     result
-                     #_(reduced result)
+;;                      (eagain? err)
+;;                      result
 
-                     ;; some other error
-                     :else
-                     (reduced {:error-code err
-                               :error-msg (error->str err)
-                               :type :encode-error})))))]
-         result)))))
+;;                      (eof? err)
+;;                      (reduced result)
 
-(defn write-packet [output-format-context]
-  (let [err (avformat_write_header output-format-context nil)]
-    (when (neg? err)
-      (throw (Exception.))))
-
-  (fn
-    ([])
-    ([result]
-     (let [result
-           (loop []
-             (let [err (av_write_frame output-format-context nil)]
-               (cond
-
-                 (neg? err)
-                 (reduced {:error-code err
-                           :type :write-flush-error})
-
-                 ;; we're done
-                 (= 1 err)
-                 nil
-
-                 ;; continue flushing
-                 :else
-                 (recur))))
-
-           result (if (reduced? result)
-                    result
-                    (let [err (av_write_trailer output-format-context)]
-                      (if (zero? err)
-                        nil
-                        (reduced {:error-code err
-                                  :type :write-tailer-error}))))]
-       result))
-    ([result packet]
-     (let [err (av_write_frame output-format-context packet)
-           result (if (neg? err)
-                    (reduced {:error-code err
-                              :type :write-error})
-                    ;; else
-                    nil)]
-       result))))
-
-(defn write-packet2
-  "Reducing function that writes a header, packets, then trailer."
-  [output-format-context]
-  (fn
-    ([]
-       output-format-context)
-    ([result]
-       (let [result
-           (loop []
-             (let [err (av_write_frame output-format-context nil)]
-               (cond
-
-                 (neg? err)
-                 (reduced {:error-code err
-                           :type :write-flush-error})
-
-                 ;; we're done
-                 (= 1 err)
-                 nil
-
-                 ;; continue flushing
-                 (zero? err)
-                 (recur)
+;;                      ;; some other error
+;;                      :else
+;;                      (reduced {:error-code err
+;;                                :error-msg (error->str err)
+;;                                :type :decode-error})))))]
+;;          result)))))
 
 
-                 :else
-                 (reduced {:type :write-flush-error}))))]
-         result))
-    ([result packet]
-     (let [err (av_write_frame output-format-context packet)
-           result (if (neg? err)
-                    (reduced {:error-code err
-                              :type :write-error})
-                    ;; else
-                    result)]
-       result))))
+;; (defn encode-frame [encoder-context]
+;;   (fn [rf]
+;;     (fn
+;;       ([] (rf))
+;;       ;; needs to send empty frame here and receive packets again.
+;;       ([result] (rf result))
+;;       ([result frame]
+;;        (let [err (avcodec_send_frame encoder-context frame)
+;;              result
+;;              (if (and (not (zero? err))
+;;                       (not= err -22)
+;;                       (eagain? err))
+;;                (reduced {:error-code err
+;;                          :type :send-packet-failure})
+;;                (loop [result result]
+;;                  (let [packet (new-packet)
+;;                        err (avcodec_receive_packet encoder-context packet)]
+;;                    (cond
+;;                      (or (zero? err)
+;;                          (einvalid? err))
+;;                      (let [result (rf result packet)]
+;;                        (if (reduced? result)
+;;                          result
+;;                          (recur result)))
+
+;;                      (eagain? err)
+;;                      result
+
+;;                      (eof? err)
+;;                      result
+;;                      #_(reduced result)
+
+;;                      ;; some other error
+;;                      :else
+;;                      (reduced {:error-code err
+;;                                :error-msg (error->str err)
+;;                                :type :encode-error})))))]
+;;          result)))))
+
+;; (defn write-packet [output-format-context]
+;;   (let [err (avformat_write_header output-format-context nil)]
+;;     (when (neg? err)
+;;       (throw (Exception.))))
+
+;;   (fn
+;;     ([])
+;;     ([result]
+;;      (let [result
+;;            (loop []
+;;              (let [err (av_write_frame output-format-context nil)]
+;;                (cond
+
+;;                  (neg? err)
+;;                  (reduced {:error-code err
+;;                            :type :write-flush-error})
+
+;;                  ;; we're done
+;;                  (= 1 err)
+;;                  nil
+
+;;                  ;; continue flushing
+;;                  :else
+;;                  (recur))))
+
+;;            result (if (reduced? result)
+;;                     result
+;;                     (let [err (av_write_trailer output-format-context)]
+;;                       (if (zero? err)
+;;                         nil
+;;                         (reduced {:error-code err
+;;                                   :type :write-tailer-error}))))]
+;;        result))
+;;     ([result packet]
+;;      (let [err (av_write_frame output-format-context packet)
+;;            result (if (neg? err)
+;;                     (reduced {:error-code err
+;;                               :type :write-error})
+;;                     ;; else
+;;                     nil)]
+;;        result))))
+
+;; (defn write-packet2
+;;   "Reducing function that writes a header, packets, then trailer."
+;;   [output-format-context]
+;;   (fn
+;;     ([]
+;;        output-format-context)
+;;     ([result]
+;;        (let [result
+;;            (loop []
+;;              (let [err (av_write_frame output-format-context nil)]
+;;                (cond
+
+;;                  (neg? err)
+;;                  (reduced {:error-code err
+;;                            :type :write-flush-error})
+
+;;                  ;; we're done
+;;                  (= 1 err)
+;;                  nil
+
+;;                  ;; continue flushing
+;;                  (zero? err)
+;;                  (recur)
+
+
+;;                  :else
+;;                  (reduced {:type :write-flush-error}))))]
+;;          result))
+;;     ([result packet]
+;;      (let [err (av_write_frame output-format-context packet)
+;;            result (if (neg? err)
+;;                     (reduced {:error-code err
+;;                               :type :write-error})
+;;                     ;; else
+;;                     result)]
+;;        result))))
 
 (defn open-context [fname]
   (let [format-ctx (avformat_alloc_context)
@@ -313,23 +312,31 @@
             (throw (ex-info "Error allocating format context."
                             {:filename fname})))
 
-        format-ctx* (doto (PointerByReference.)
+        format-ctx* (dt-ffi/make-ptr :pointer (-> format-ctx
+                                                  dt-ffi/->pointer
+                                                  .address))
+        #_(doto (PointerByReference.)
                       (.setValue (.getPointer format-ctx)))
         _ (.register cleaner format-ctx
                      (fn []
                        (avformat_free_context (.getValue format-ctx*))))
-        err (avformat_open_input format-ctx* fname nil nil)]
+        err (avformat_open_input format-ctx* (dt-ffi/string->c fname) nil nil)]
 
     (if (zero? err)
       (do
         (.register cleaner format-ctx
                      (fn []
                        (avformat_close_input
+                        
                         ;; hold explicit reference to format-ctx
-                        (PointerByReference. format-ctx))))
+                        (-> format-ctx
+                            dt-ffi/->pointer
+                            .address)
+                        #_(PointerByReference. format-ctx))))
         format-ctx)
       (throw (ex-info "Error opening format context"
-                      {:error-code err})))))
+                      {:error-code err
+                       :error-msg (error->str err)})))))
 
 (defn video-codec-context-format [codec-context]
   {:codec {:id (:codec_id codec-context)}
@@ -356,16 +363,17 @@
 
 (defn add-stream [output-format-context encoder-context]
   (let [output-format (:oformat output-format-context)
-        output-format+ (Structure/newInstance AVOutputFormatByReference
+        output-format+ (dt-ffi/ptr->struct :AVOutputFormat output-format)
+        #_(Structure/newInstance AVOutputFormatByReference
                                               output-format)
 
         _ (when (not (zero?
                       (bit-and (:flags output-format+)
                                AVFMT_GLOBALHEADER)))
             (doto encoder-context
-              (.writeField "flags"
-                           (int (bit-or (:flags encoder-context )
-                                        AV_CODEC_FLAG_GLOBAL_HEADER)))))
+              (.put :flags
+                    (int (bit-or (:flags encoder-context )
+                                 AV_CODEC_FLAG_GLOBAL_HEADER)))))
 
         output-codec (:codec encoder-context)
         _ (assert output-codec)
@@ -375,7 +383,12 @@
                             {:err err})))
 
         ;; stream
-        stream (avformat_new_stream output-format-context output-codec)
+        stream (avformat_new_stream output-format-context 
+                                    ;; originally passed output-codec, but
+                                    ;; per the docs. this parameter is not used and does nothing.
+                                    ;;output-codec
+                                    nil
+                                    )
         _ (when (nil? stream)
             (throw (Exception. "Could not create stream.")))
 
@@ -422,19 +435,22 @@
 
 
         _ (when (= codec-id raw/AV_CODEC_ID_H264)
-            (raw/av_opt_set (:priv_data encoder-context) "preset" "slow" 0))
+            (raw/av_opt_set (:priv_data encoder-context) 
+                            (dt-ffi/string->c "preset")
+                            (dt-ffi/string->c "slow") 
+                            0))
 
         _ (doto encoder-context
-            (.writeField "width" (int width))
-            (.writeField "height" (int height))
-            (.writeField "gop_size" (int gop-size))
+            (.put :width (int width))
+            (.put :height (int height))
+            (.put :gop_size (int gop-size))
             ;; (.writeField "max_b_frames" (int max_b_frames))
-            (.writeField "pix_fmt" pixel-format)
-            (.writeField "time_base" time-base))
+            (.put :pix_fmt pixel-format)
+            (.put :time_base time-base))
 
         _ (when-let [bit-rate (:bit-rate format)]
             (doto encoder-context
-              (.writeField "bit_rate" bit-rate)))]
+              (.put :bit_rate bit-rate)))]
     encoder-context))
 
 (defn audio-encoder-context [format]
@@ -472,6 +488,7 @@
     :media-type/video (video-encoder-context format)
     :media-type/audio (audio-encoder-context format)))
 
+
 (defn find-decoder-context [media-type format-context]
   (let [err (avformat_find_stream_info format-context nil)
         _ (when (not (zero? err))
@@ -489,28 +506,40 @@
             (throw (ex-info "Could not find best stream"
                             {:error-code best-stream
                              :media-type media-type})))
-        num-streams (.readField format-context "nb_streams")
-        streams (.getPointerArray
-                 (.readField format-context "streams")
-                 0 num-streams)
-        stream (aget streams best-stream)
-        stream+ (Structure/newInstance AVStreamByReference
-                                       stream)
+        ;; (.readField format-context "nb_streams")
+        num-streams (:nb_streams format-context)
+        
+        ;; streams (.getPointerArray
+        ;;          (.readField format-context "streams")
+        ;;          0 num-streams)
+        
+        streams (-> (native-buffer/wrap-address (:streams format-context)
+                                                (* 8 num-streams))
+                    (native-buffer/set-native-datatype :uint64))
+        stream (nth streams best-stream)
+        ;; stream+ (Structure/newInstance AVStreamByReference
+        ;;                                stream)
+        stream+ (dt-ffi/ptr->struct :AVStream (dt-ffi/->pointer stream))
 
-        codec-parameters (.readField stream+ "codecpar")
-        codec-id (.readField codec-parameters "codec_id" )
+        ;; codec-parameters (.readField stream+ "codecpar")
+        codec-parameters (dt-ffi/ptr->struct 
+                          :AVCodecParameters
+                          (:codecpar stream+))
+        ;; codec-id (.readField codec-parameters "codec_id" )
+        codec-id (:codec-id codec-parameters)
         decoder (avcodec_find_decoder codec-id)
         _ (when (nil? decoder)
             (throw (ex-info "Could not find decoder"
                             {:codec-id codec-id})))
-        decoder-context (avcodec_alloc_context3 (.getPointer decoder))
+        decoder-context (avcodec_alloc_context3 decoder)
 
         _ (when (nil? decoder-context)
             (throw (ex-info "Could not allocate decoder"
                             {})))
 
         _ (doto decoder-context
-            (.writeField "time_base"
+            (.put decoder-context :time_base (:time_base stream+ ))
+            #_(.writeField "time_base"
                          (.readField stream+ "time_base")))]
 
     (avcodec_parameters_to_context decoder-context codec-parameters)
@@ -521,27 +550,35 @@
       decoder-context)))
 
 (defn open-output-context [fname]
-  (let [output-io-context* (PointerByReference.)
+  (let [;; output-io-context* (PointerByReference.)
+        output-io-context* (dt-ffi/make-ptr :pointer 0)
+        fname* (dt-ffi/string->c fname)
         err (avio_open output-io-context*
-                       fname
+                       fname*
                        AVIO_FLAG_WRITE)
         _ (when (neg? err)
             (throw (Exception.)))
 
-        output-io-context (Structure/newInstance AVIOContextByReference
-                                                 (.getValue output-io-context*))
+        ;; output-io-context (Structure/newInstance AVIOContextByReference
+        ;;                                          (.getValue output-io-context*))
+        output-io-context (dt-ffi/ptr->struct :AVIOContext
+                                              (first output-io-context*))
         
-        output-format-context* (PointerByReference.)
+        ;; output-format-context* (PointerByReference.)
+        output-format-context* (dt-ffi/make-ptr :pointer 0)
         err (avformat_alloc_output_context2 output-format-context*
                                             nil
                                             nil
-                                            fname)
+                                            fname*)
         _ (when (neg? err)
             (throw (Exception. "Could not create output context.")))
-        output-format-context (Structure/newInstance AVFormatContextByReference
-                               (.getValue output-format-context*))
+        ;; output-format-context (Structure/newInstance AVFormatContextByReference
+        ;;                        (.getValue output-format-context*))
+        output-format-context (dt-ffi/ptr->struct :AVFormatContext
+                                                  (first output-format-context*))
         output-format-context (doto output-format-context
-                                (.writeField "pb" (.getValue output-io-context*)))]
+                                #_(.writeField "pb" (.getValue output-io-context*))
+                                (.put :pb output-io-context))]
     output-format-context))
 
 
@@ -570,7 +607,8 @@
 
 
 (defn raw-codec-list []
-  (let [iter-data (PointerByReference. Pointer/NULL)]
+  (let [;; iter-data (PointerByReference. Pointer/NULL)
+        iter-data (dt-ffi/make-ptr :pointer 0)]
     (loop [codecs []]
       (let [codec (av_codec_iterate iter-data)]
         (if codec
@@ -592,20 +630,28 @@
         _ (when (not (zero? err))
             (throw (ex-info "Could not find stream info."
                             {:error-code err})))
+        ;; num-streams (:nb_streams format-context)
         num-streams (:nb_streams format-context)
-        streams (.getPointerArray
-                 (.readField format-context "streams")
-                 0 num-streams)
+        ;; streams (.getPointerArray
+        ;;          (.readField format-context "streams")
+        ;;          0 num-streams)
+        streams (-> (native-buffer/wrap-address (:streams format-context)
+                                                (* 8 num-streams))
+                    (native-buffer/set-native-datatype :uint64))
 
         streams-info
         (into []
               (comp
                (map (fn [stream]
-                      (let [stream+ (Structure/newInstance AVStreamByReference
-                                                           stream)
+                      (let [
+                            ;; stream+ (Structure/newInstance AVStreamByReference
+                            ;;                                 stream)
+                            stream+ (dt-ffi/ptr->struct :AVStream stream)
                             stream-index (:index stream+)
 
-                            codec-parameters (:codecpar stream+)
+                            codec-parameters (dt-ffi/ptr->struct 
+                                              :AVCodecParameters
+                                              (:codecpar stream+))
                             codec-id (:codec_id codec-parameters)
 
                             media-type (:codec_type codec-parameters)
@@ -623,8 +669,15 @@
                                     (d/datafy codec-parameters))]
                         format))))
               streams)]
-    (avformat_close_input (PointerByReference. (.getPointer format-context)))
+    (avformat_close_input 
+     ;;(PointerByReference. (.getPointer format-context))
+     (dt-ffi/make-ptr :pointer (-> format-context (dt-ffi/->pointer) .address)))
     {:streams streams-info}))
+
+(comment
+  (probe "../clj-media/my-fade-in-out.mp4")
+  ,)
+
 
 
 (defn make-frame [{:keys [bytes
@@ -633,28 +686,27 @@
                           key-frame?
                           pts]
                    :as m}]
-  (let [frame (new-frame)]
+  (let [frame (av_frame_alloc)]
     (if time-base
       (doto frame
-       (.writeField "time_base"
-                    (datafy-media/clj->avrational time-base)))
+       (.put :time_base (datafy-media/clj->avrational time-base)))
       ;; else
       (throw (ex-info "Time base required when creating frames."
                       {:frame m})))
 
     (if pts
       (doto frame
-        (.writeField "pts" (long pts)))
+        (.put :pts (long pts)))
       ;; else
       (throw (ex-info "pts required when creating frames."
                       {:frame m})))
 
     (when key-frame?
       (doto frame
-        (.writeField "key_frame" (case key-frame?
-                                   (1 true) (int 1)
-                                   ;; else
-                                   (int 0)))))
+        (.put :key_frame (case key-frame?
+                           (1 true) (int 1)
+                           ;; else
+                           (int 0)))))
 
     (if bytes
       (case (:media-type format)
@@ -677,9 +729,9 @@
                             {:frame m})))
 
           (doto frame
-            (.writeField "nb_samples" (int num-samples))
-            (.writeField "format" sample-format)
-            (.writeField "sample_rate" sample-rate))
+            (.put :nb_samples (int num-samples))
+            (.put :format sample-format)
+            (.put :sample_rate sample-rate))
           (assert
            (zero? (raw/av_channel_layout_copy
                    (.getPointer (:ch_layout frame))
@@ -704,14 +756,14 @@
                       width
                       height]} (datafy-media/map->format format)]
           (doto frame
-            (.writeField "width" (int width))
-            (.writeField "height" (int height))
-            (.writeField "format" pixel-format))
+            (.put :width (int width))
+            (.put :height (int height))
+            (.put :format pixel-format))
           (if-let [line-size (:line-size format)]
             (doto frame
-              (.writeField "linesize"
-                           (doto (int-array 8)
-                             (aset 0 line-size))))
+              (.put :linesize
+                    (doto (int-array 8)
+                      (aset 0 line-size))))
             (throw (ex-info ":line-size must be set when creating video frames."
                             {:frame m})))
           (assert

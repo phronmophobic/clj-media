@@ -3,7 +3,11 @@
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
             [clojure.edn :as edn]
+            [tech.v3.datatype.struct :as dt-struct]
+            [tech.v3.datatype.ffi :as dt-ffi]
+            [tech.v3.datatype.native-buffer :as native-buffer]
             [com.phronemophobic.clong.gen.jna :as gen]
+            [com.phronemophobic.clong.gen.dtype-next :as gen.dtype-next]
             [com.rpl.specter :as specter])
   (:import
    java.io.PushbackReader)
@@ -201,6 +205,12 @@
                         #(or (str/starts-with? (:symbol %) "vk")
                              (str/starts-with? (:symbol %) "av_vk")
                              (str/includes? (:symbol %) "vdpau"))]
+                       specter/NONE)
+       ;; hacks
+       (specter/setval [:structs
+                        specter/ALL
+                        #(#{:clong/AVPanScan
+                            ,} (:id %))]
                        specter/NONE)))
 
 (def av-api
@@ -211,6 +221,51 @@
                 pbr (PushbackReader. rdr)]
       (edn/read pbr))))
 
-(defonce ^:private generated-api (gen/def-api lib av-api))
-(defmacro import-structs! []
-  `(gen/import-structs! av-api "com.phronemophobic.clj_media.impl.raw.structs"))
+;; https://github.com/cnuernber/dtype-next/issues/114
+(defn fields-hack [fields]
+  (into []
+        (map (fn [field]
+               (if (and (> (get field :n-elems 1) 1)
+                        (= :pointer (:datatype field)))
+                 (assoc field :datatype :uint64)
+                 field)))
+        fields))
+
+
+(def dtype-api (gen.dtype-next/api->library-interface av-api))
+(def dtype-structs (gen.dtype-next/api->structs av-api))
+(doseq [[id fields] dtype-structs]
+  (let [fields (fields-hack fields)]
+    (dt-struct/define-datatype! id fields)))
+(defmacro chunk-define []
+  `(do
+     ~@(into
+        []
+        (comp (map-indexed
+               (fn [i chunk]
+                 (let [interface (into {} chunk)
+                       classname (symbol (str (ns-name *ns* ) (str ".Bindings" i)))]
+                   `(dt-ffi/define-library-interface (quote ~interface)
+                      :classname (quote ~classname))))))
+        (partition-all 5 dtype-api))))
+  (chunk-define)
+
+(let [to-augment (into []
+                         (filter (fn [{:keys [function/ret]}]
+                                   (and (vector? ret)
+                                        (= :coffi.mem/pointer (first ret))
+                                        (keyword? (second ret))
+                                        (= "clong" (namespace (second ret)))
+                                        )))
+                         
+                         (:functions av-api))
+        interns (ns-interns *ns*)]
+    (doseq [{:keys [id function/ret]} to-augment]
+      (when-let [v (get interns (-> id name symbol))]
+        (let [dtype (-> (second ret) name keyword)]
+          (alter-var-root v (fn [f]
+                              (fn [& args]
+                                (when-let [result (apply f args)]
+                                  (dt-ffi/ptr->struct dtype result)))))))))
+
+(gen.dtype-next/def-enums av-api)

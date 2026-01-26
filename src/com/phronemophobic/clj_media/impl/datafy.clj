@@ -2,6 +2,10 @@
   (:require [clojure.string :as str]
             [clojure.datafy :as d]
             [clojure.core.protocols :as p]
+            [tech.v3.datatype.struct :as dt-struct]
+            [tech.v3.datatype :as dt]
+            [tech.v3.datatype.ffi :as dt-ffi]
+            [tech.v3.datatype.native-buffer :as native-buffer]
             [com.phronemophobic.clj-media.impl.util
              :refer [normalize-str
                      str->kw]]
@@ -10,67 +14,104 @@
   (:import
    java.nio.ByteOrder
    java.nio.ByteBuffer
-   com.sun.jna.Memory
-   com.sun.jna.Structure
-   com.sun.jna.Pointer
-   com.sun.jna.ptr.PointerByReference))
+   sun.misc.Unsafe
+   tech.v3.datatype.ffi.Pointer
+   tech.v3.datatype.struct.Struct
+   ;; com.sun.jna.Memory
+   ;; com.sun.jna.Structure
+   ;; com.sun.jna.Pointer
+   ;;com.sun.jna.ptr.PointerByReference
+   ))
 
-(raw/import-structs!)
+;; (raw/import-structs!)
+
+
 
 (defn ch-layout->str [ch-layout]
-  (let [buf (Memory. 512)
-        err (av_channel_layout_describe (.getPointer ch-layout) buf (.size buf))]
-    (when (neg? err)
-      (throw (ex-info "Could not encode ch-layout."
-                      {:ch-layout ch-layout
-                       :err err})))
-    (String. (.getByteArray buf 0
-                            ;; size includes null terminator
-                            (dec err))
-             "ascii")))
+  (let [buf (native-buffer/malloc 512)
+        err (av_channel_layout_describe ch-layout buf (native-buffer/native-buffer-byte-len buf))
+        _ (when (neg? err)
+            (throw (ex-info "Could not encode ch-layout."
+                            {:ch-layout ch-layout
+                             :err err})))]
+    (native-buffer/native-buffer->string buf 0 (max (dec err) 0))))
 
 (defn str->ch-layout [s]
   (assert s "Invalid ch-layout.")
-  (let [ch-layout (AVChannelLayoutByReference.)
-        err (av_channel_layout_from_string ch-layout s)]
+  (let [;; ch-layout (AVChannelLayoutByReference.)
+        ch-layout (dt-struct/new-struct :AVChannelLayout
+                                        {:container-type :native-heap})
+        err (av_channel_layout_from_string ch-layout (dt-ffi/string->c s))]
     (when (neg? err)
       (throw (ex-info "Invalid channel layout."
                       {:channel-layout-str s})))
     ch-layout))
 
-(defn pointer-seq [p size terminal]
-  (loop [offset 0
-         results []]
-    (let [x (case size
-              4 (.getInt p offset)
-              8 (.getLong p offset))]
-      (if (= x terminal)
-        results
-        (recur (+ offset size)
-               (conj results x))))))
+(comment
+  
 
-(def ^:private avrational-size (.size (AVRational.)))
+
+  (def my-cl (let [cl (dt-struct/new-struct :AVChannelLayout
+                                            {:container-type :native-heap})
+                   s (dt-ffi/string->c "stereo")]
+               (av_channel_layout_from_string cl s)
+               cl))
+  (ch-layout->str my-cl)
+  ,)
+
+(defn pointer-seq [addr size terminal]
+  (when (not (zero? addr))
+    (loop [addr addr 
+           results []]
+      
+      (when (> (count results) 100)
+        (throw (ex-info "should have stopped by now" {})))
+      (let [x (case size
+                4 (.getInt (native-buffer/unsafe) addr)
+                8 (.getLong (native-buffer/unsafe) addr))]
+        (if (= x terminal)
+          results
+          (recur (+ addr size)
+                 (conj results x)))))))
+
+(def ^:private avrational-size (:datatype-size
+                                (dt-struct/get-struct-def :AVRational)))
 (defn avrational-seq [p]
-  (loop [p p
-         results []]
-    (let [ratio (Structure/newInstance AVRationalByReference p)]
-      (if (and (zero? (:num ratio))
-               (zero? (:den ratio)))
-        results
-        (recur (.share p avrational-size)
-               (conj results ratio)))))
-  )
+  (when (not (zero? p))
+    (loop [p p
+           results []]
+      (when (> (count results) 100)
+        (throw (ex-info "should have stopped by now" {})))
+      (let [ratio (dt-ffi/ptr->struct :AVRational p)
+            ;;(Structure/newInstance AVRationalByReference p)
+            ]
+        (if (and (zero? (:num ratio))
+                 (zero? (:den ratio)))
+          results
+          (recur ;;(.share p avrational-size)
+                 (+ p avrational-size)
+                 (conj results ratio)))))))
 
-(def ^:private avchannellayout-size (.size (AVChannelLayout.)))
+
+
+(def ^:private avchannellayout-size (:datatype-size
+                                     (dt-struct/get-struct-def :AVChannelLayout)))
 (defn avchannellayout-seq [p]
-  (loop [p p
-         results []]
-    (let [bs (.getByteArray p 0 avchannellayout-size)]
-      (if (every? zero? bs)
-        results
-        (let [layout (Structure/newInstance AVChannelLayoutByReference p)]
-          (recur (.share p avchannellayout-size)
-                 (conj results layout)))))))
+  (when (not (zero? p))
+    (loop [p p
+           results []]
+      (when (> (count results) 100)
+        (throw (ex-info "should have stopped by now" {})))
+
+      (let [bs (native-buffer/wrap-address p avchannellayout-size)
+            ;;(.getByteArray p 0 avchannellayout-size)
+            ]
+        (if (every? zero? bs)
+          results
+          (let [layout (dt-ffi/ptr->struct :AVChannelLayout p)]
+            (recur ;; (.share p avchannellayout-size)
+                   (+ p avchannellayout-size)
+                   (conj results layout))))))))
 
 (def avoption-type->kw
   (->> (:enums raw/av-api)
@@ -89,19 +130,11 @@
                        type))
 (defmethod read-bytes :avoption-type/int64
   [_ bs]
-  (let [_ (assert (= 8 (alength bs)))
-        bs (if (= (ByteOrder/nativeOrder)
-                  ByteOrder/LITTLE_ENDIAN)
-             (byte-array (reverse bs))
-             bs)
-        val (BigInteger. bs)]
-    val))
+  (native-buffer/read-long bs))
 
 (defmethod read-bytes :avoption-type/int
   [_ bs]
-  (-> (ByteBuffer/wrap bs)
-      (.order (ByteOrder/nativeOrder))
-      (.getInt)))
+  (native-buffer/read-int bs))
 
 (defmethod read-bytes :avoption-type/bool
   [_ bs]
@@ -110,32 +143,26 @@
 
 (defmethod read-bytes :avoption-type/uint64
   [_ bs]
-  (let [_ (assert (= 8 (alength bs)))
-        bs (if (= (ByteOrder/nativeOrder)
+  (let [bs (if (= (ByteOrder/nativeOrder)
                   ByteOrder/LITTLE_ENDIAN)
              (byte-array (reverse bs))
-             bs)
+             (byte-array bs))
         val (BigInteger. 1 bs)]
     val))
 
 (defmethod read-bytes :avoption-type/double
   [_ bs]
-  (-> (ByteBuffer/wrap bs)
-      (.order (ByteOrder/nativeOrder))
-      (.getDouble)))
+  (native-buffer/read-double bs))
 
 (defmethod read-bytes :avoption-type/float
   [_ bs]
-  (-> (ByteBuffer/wrap bs)
-      (.order (ByteOrder/nativeOrder))
-      (.getFloat)))
+  (native-buffer/read-float bs))
 
 (defmethod read-bytes :avoption-type/string
   [_ bs]
   (let [ptr-native (read-bytes :avoption-type/int64 bs )]
     (when (not (zero? ptr-native))
-      (let [p (Pointer.  ptr-native)]
-        (.getString p 0 "ascii")))))
+      (dt-ffi/c->string (dt-ffi/->pointer ptr-native)))))
 
 (defmethod read-bytes :default
   [type bs]
@@ -147,7 +174,15 @@
    :int (read-bytes :avoption-type/int bs)})
 
 
+(defmulti datafy-struct (fn [^Struct s]
+                          (Struct/.datatype s)))
+
 (extend-protocol p/Datafiable
+  Struct
+  (datafy [s]
+    (datafy-struct s)))
+
+#_(extend-protocol p/Datafiable
   AVClassByReference
   (datafy [cls]
     (when cls
@@ -160,10 +195,21 @@
                (recur o (conj opts (d/datafy o)))
                opts))))})))
 
+
+(defmethod datafy-struct :AVClass [cls]
+  {:options
+   (let [cls* (dt-ffi/make-ptr :pointer (.address (dt-ffi/->pointer cls)))]
+     (loop [prev nil
+            opts []]
+       (let [o (av_opt_next cls* prev)]
+         (if o
+           (recur o (conj opts (d/datafy o)))
+           opts))))})
+
 (defn filter-options [flt]
   (let [cls (:priv_class flt)]
     (when cls
-      (let [cls* (PointerByReference. (.getPointer cls))]
+      (let [cls* (dt-ffi/make-ptr :pointer cls)]
         (loop [prev nil
                opts []]
           (let [o (av_opt_next cls* prev)]
@@ -171,14 +217,18 @@
               (recur o (conj opts (d/datafy o)))
               opts)))))))
 
-(extend-protocol p/Datafiable
+#_(extend-protocol p/Datafiable
   AVFilterByReference
   (datafy [flt]
     (merge
-     {:name (.getString (.getPointer (:name flt)) 0 "ascii")
+     {:name 
+      ;;(.getString (.getPointer (:name flt)) 0 "ascii")
+      (dt-ffi/c->string (:name flt))
       :options (filter-options flt)}
-     (when-let [description (.getPointer (:description flt))]
-       {:description (.getString description 0 "ascii")})
+     (when-let [description (dt-ffi/c->string (:description flt))]
+       {:description description
+        ;;(.getString description 0 "ascii")
+        })
      (when-let [inputs (:inputs flt)]
        (let [size (avfilter_filter_pad_count flt 0)]
          {:inputs
@@ -203,10 +253,47 @@
                           (condp = type
                             AVMEDIA_TYPE_AUDIO :media-type/audio
                             AVMEDIA_TYPE_VIDEO :media-type/video)
-                          :name name})))
+                          :name (dt-ffi/c->string name)})))
                 (range size))})))))
 
-(extend-protocol p/Datafiable
+(defmethod datafy-struct :AVFilter [flt]
+  (merge
+   {:name 
+    ;;(.getString (.getPointer (:name flt)) 0 "ascii")
+    (dt-ffi/c->string (:name flt))
+    :options (filter-options flt)}
+   (when-let [description (dt-ffi/c->string (:description flt))]
+     {:description description
+      ;;(.getString description 0 "ascii")
+      })
+   (when-let [inputs (:inputs flt)]
+     (let [size (avfilter_filter_pad_count flt 0)]
+       {:inputs
+        (into []
+              (map (fn [i]
+                     (let [name (avfilter_pad_get_name inputs i)
+                           type (avfilter_pad_get_type inputs i)]
+                       {:media-type
+                        (condp = type
+                          AVMEDIA_TYPE_AUDIO :media-type/audio
+                          AVMEDIA_TYPE_VIDEO :media-type/video)
+                        :name (dt-ffi/c->string name)})))
+              (range size))}))
+   (when-let [outputs (:outputs flt)]
+     (let [size (avfilter_filter_pad_count flt 1)]
+       {:outputs
+        (into []
+              (map (fn [i]
+                     (let [name (avfilter_pad_get_name outputs i)
+                           type (avfilter_pad_get_type outputs i)]
+                       {:media-type
+                        (condp = type
+                          AVMEDIA_TYPE_AUDIO :media-type/audio
+                          AVMEDIA_TYPE_VIDEO :media-type/video)
+                        :name (dt-ffi/c->string name)})))
+              (range size))}))))
+
+#_(extend-protocol p/Datafiable
   AVOptionByReference
   (datafy [opt]
     (let [option-type (avoption-type->kw (:type opt))]
@@ -217,13 +304,41 @@
        (when-let [help (:help opt)]
          {:help (.getString (.getPointer help) 0 "ascii")})
        (when-let [default (:default_val opt)]
-         {:default-val (read-bytes option-type default)})
+         
+         (let [buf (native-buffer/wrap-address (+ (.address opt))
+                    )]{:default-val (read-bytes option-type default)}))
        (when-let [min (:min opt)]
          {:min min})
        (when-let [max (:max opt)]
          {:max max})
        (when-let [unit (:unit opt)]
          {:unit (.getString (.getPointer unit) 0 "ascii")})))))
+
+(def ^:private default-val-layout
+  (-> (dt-struct/get-struct-def :AVOption)
+      :layout-map
+      :default_val
+      ))
+(defmethod datafy-struct :AVOption [opt]
+  (let [option-type (avoption-type->kw (:type opt))]
+    (merge
+     {:name (dt-ffi/c->string (:name opt))
+      :offset (:offset opt)
+      :type option-type}
+     (when-let [help (:help opt)]
+       {:help (dt-ffi/c->string help)})
+     (when-let [default (:default_val opt)]
+       (let [buf (native-buffer/wrap-address (+ (-> opt dt-ffi/->pointer .address)
+                                                (:offset default-val-layout))
+                                             (:n-elems default-val-layout)
+                                             opt)]
+         {:default-val (read-bytes option-type buf)}))
+     (when-let [min (:min opt)]
+       {:min min})
+     (when-let [max (:max opt)]
+       {:max max})
+     (when-let [unit (:unit opt)]
+       {:unit (dt-ffi/c->string unit)}))))
 
 
 (def media-type->kw
@@ -274,10 +389,6 @@
    sample-format->kw))
 
 
-
-
-
-
 (def channel-order->kw
   (->> (:enums raw/av-api)
        (filter (fn [enum]
@@ -312,11 +423,10 @@
       :nb-channels (:nb_channels p)}
      (when (= :channel-order/native)
        (let [bs (:u p)
-             _ (assert (= 8 (alength bs)))
              bs (if (= (ByteOrder/nativeOrder)
                        ByteOrder/LITTLE_ENDIAN)
                   (byte-array (reverse bs))
-                  bs)
+                  (byte-array bs))
              mask (BigInteger. 1 bs)
              channels (into []
                             (comp (remove (fn [[num kw]]
@@ -331,40 +441,45 @@
 
 (defn codec->map [codec]
   (merge
-   {:name (.getString (:name codec) 0 "ascii")
-    :long-name (.getString (:long_name codec) 0 "ascii")
+   {:name (dt-ffi/c->string (:name codec))
+    :long-name (dt-ffi/c->string (:long_name codec))
     :media-type (media-type->kw (:type codec))
     :id (:id codec)}
-   (when-let [supported-framerates (:supported_framerates codec)]
-     {:supported-framerates
-      (into []
-            (map (fn [ratio]
-                   (/ (:num ratio)
-                      (:den ratio))))
-            (avrational-seq supported-framerates))})
-   (when-let [pix-fmts (:pix_fmts codec)]
-     {:pixel-formats
-      (into []
-            (map pixel-format->kw)
-            (pointer-seq pix-fmts
-                              4 -1))})
-   (when-let [sample-rates (:supported_samplerates codec)]
-     {:sample-rates
-      (into []
-            (pointer-seq sample-rates 4 0))})
-   (when-let [sample-fmts (:sample_fmts codec)]
-     {:sample-formats
-      (into []
-            (map sample-format->kw)
-            (pointer-seq sample-fmts
-                              4 -1))})
-   (when-let [channel-layouts (:ch_layouts codec)]
-     {:channel-layouts
-      (into []
-            (map avchannellayout->map)
-            (avchannellayout-seq channel-layouts))})))
+   (let [supported-framerates (:supported_framerates codec)]
+     (when (not (zero? supported-framerates))
+       {:supported-framerates
+        (into []
+              (map (fn [ratio]
+                     (/ (:num ratio)
+                        (:den ratio))))
+              (avrational-seq supported-framerates))}))
+   (let [pix-fmts (:pix_fmts codec)]
+     (when (not (zero? pix-fmts))
+       {:pixel-formats
+        (into []
+              (map pixel-format->kw)
+              (pointer-seq pix-fmts
+                           4 -1))}))
+   (let [sample-rates (:supported_samplerates codec)]
+     (when (not (zero? sample-rates))
+       {:sample-rates
+        (into []
+              (pointer-seq sample-rates 4 0))}))
+   (let [sample-fmts (:sample_fmts codec)]
+     (when (not (zero? sample-fmts))
+       {:sample-formats
+        (into []
+              (map sample-format->kw)
+              (pointer-seq sample-fmts
+                           4 -1))}))
+   (let [channel-layouts (:ch_layouts codec)]
+     (when (not (zero? channel-layouts))
+       {:channel-layouts
+        (into []
+              (map avchannellayout->map)
+              (avchannellayout-seq channel-layouts))}))))
 
-(extend-protocol p/Datafiable
+#_(extend-protocol p/Datafiable
   AVRational
   (datafy [ratio]
     [(:num ratio)
@@ -374,12 +489,19 @@
     [(:num ratio)
      (:den ratio)]))
 
-(extend-protocol p/Datafiable
+(defmethod datafy-struct :AVRational [ratio]
+  [(:num ratio)
+   (:den ratio)])
+
+#_(extend-protocol p/Datafiable
   AVCodecByReference
   (datafy [codec]
     (codec->map codec)))
 
-(extend-protocol p/Datafiable
+(defmethod datafy-struct :AVCodec [codec]
+  (codec->map codec))
+
+#_(extend-protocol p/Datafiable
   AVChannelLayout
   (datafy [codec]
     (avchannellayout->map codec))
@@ -388,7 +510,10 @@
   (datafy [codec]
     (avchannellayout->map codec)))
 
-(extend-protocol p/Datafiable
+(defmethod datafy-struct :AVChannelLayout [cl]
+  (avchannellayout->map cl))
+
+#_(extend-protocol p/Datafiable
   AVCodecParametersByReference
   (datafy [params]
     (let [media-type (media-type->kw (:codec_type params))]
@@ -417,15 +542,44 @@
         ;; else
         {:media-type media-type}))))
 
+(defmethod datafy-struct :AVCodecParameters [params]
+  (let [media-type (media-type->kw (:codec_type params))]
+    (case media-type
+      (:media-type/audio
+       :media-type/video)
+      (let [codec (avcodec_find_decoder (:codec_id params))]
+        (merge
+         {:media-type media-type
+          :codec (d/datafy codec)
+          :bit-rate (:bit_rate params)}
+         (case media-type
+           :media-type/audio
+           {:ch-layout (d/datafy (:ch_layout params))
+            :sample-rate (:sample_rate params)
+            :frame-size (:frame_size params)
+            :bits-per-coded-sample (:bits_per_coded_sample params)
+            :bits-per-raw-sample (:bits_per_raw_sample params)
+            :sample-format (sample-format->kw (:format params))}
+           :media-type/video
+           {:width (:width params)
+            :height (:height params)
+            :video-delay (:video_delay params)
+            :pixel-format (pixel-format->kw (:format params))})))
+      
+      ;; else
+      {:media-type media-type})))
+
 
 (defn ->avrational [num den]
-  (doto (AVRational.)
+  (dt-struct/map->struct :AVRational {:num num :den den} :gc)
+  #_(doto (AVRational.)
     (.writeField "num" (int num))
     (.writeField "den" (int den))))
 
 (defn clj->avrational [o]
   (cond
-    (instance? AVRational o)
+    (and (instance? Struct o)
+         (= :AVRational (Struct/.datatype o)))
     o
 
     (ratio? o)
@@ -573,12 +727,17 @@
                   AV_OPT_SEARCH_CHILDREN))
 
 (defn list-filters []
-  (let [iter-data (PointerByReference. Pointer/NULL)]
+  (let [iter-data (dt-ffi/make-ptr :pointer 0)
+        #_(PointerByReference. Pointer/NULL)]
     (loop [flts []]
       (let [flt (av_filter_iterate iter-data)]
         (if flt
           (recur (conj flts (d/datafy flt)))
           flts)))))
+
+(comment
+  (list-filters)
+  ,)
 
 ;; (defmulti set-option
 ;;   (fn [obj class-name k v]
