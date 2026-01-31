@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
             [clojure.core.async :as async]
+            [clojure.core.async.flow :as flow]
             [tech.v3.tensor :as dtt]
             [tech.v3.datatype.struct :as dt-struct]
             [tech.v3.datatype :as dt]
@@ -212,6 +213,41 @@
         (+ read-bytes
            (.write source-data-line buf 0 (alength buf))))))))
 
+(defn play-sound-proc []
+  {:describe (fn []
+               {
+                :params {}
+                :ins {:in "frames to play"}
+                :outs {:recycle-frame "Frames to recycle"}})
+   :init (fn [state] state)
+   :transition (fn [state status]
+                 state)
+   :transform
+   (fn [{:keys [result] :as state} in msg]
+     (case (:type msg)
+       :stream-opened
+       (let [rf (play-sound {:audio-format (default-stereo-format)})
+             result (rf)]
+         [(assoc state
+                 :rf rf
+                 :result result)])
+       :stream-closed
+       (do
+         (when-let [rf (:rf state)]
+           (rf result))
+         [(dissoc state :rf :result)])
+       :new-frame
+       (let [frame (:frame msg)
+             linesize (-> frame :linesize (first))
+             buf (native-buffer/wrap-address (first (:data frame))
+                                             linesize)
+             bs (byte-array linesize)
+             rf (:rf state)]
+         (dt/copy! buf bs)
+         (let [new-result (rf result bs)]
+           [(assoc state :result new-result)
+            {:recycle-frame [frame]}]))))})
+
 
 
 (defn frame->buf [sample-format]
@@ -392,6 +428,274 @@
                            (recur result))))
                      ;; send last frame
                      (rf result output-frame))))))))))))
+
+
+
+(defn resample-close [state]
+  (when-let [resample-context (:resample-context state)]
+    (swr_free (dt-ffi/make-ptr :pointer (-> resample-context
+                                            dt-ffi/->pointer
+                                            .address))))
+  (dissoc state :resample-context))
+
+(defn resample-init [state output-format]
+  (let [resample-context* (dt-ffi/make-ptr :pointer 0 )
+
+        input-format (:input-format state)
+        _ (prn input-format output-format)
+        _ (assert (and input-format
+                       output-format))
+        err (swr_alloc_set_opts2 resample-context*
+                                 (:ch-layout output-format)
+                                 (:sample-format output-format)
+                                 (:sample-rate output-format)
+                                 (:ch-layout input-format)
+                                 (:sample-format input-format)
+                                 (:sample-rate input-format)
+                                 0
+                                 nil)
+        _ (when (not (zero? err))
+            (throw (Exception. "Could not initialize resample context")))
+        resample-context (dt-ffi/->pointer (first resample-context*))
+        
+        err (swr_init resample-context)
+        _ (when (neg? err)
+            (throw (Exception. "Could not initialize resample context")))
+        
+        bytes-per-sample (av_get_bytes_per_sample (:sample-format output-format))
+        num-output-channels (-> output-format
+                                :ch-layout
+                                :nb_channels)
+        
+        sample-offset-multiplier
+        (if (= 1 (av_sample_fmt_is_planar (:sample-format output-format)))
+          bytes-per-sample
+          (* bytes-per-sample num-output-channels))
+
+        _ (assert (pos? bytes-per-sample))
+        ;; should maybe check for AV_CODEC_CAP_VARIABLE_FRAME_SIZE?
+        output-frame-size (or (:frame-size output-format)
+                              (int 1024))]
+    (assoc state
+           :output-frame-size output-frame-size
+           :sample-offset-multiplier sample-offset-multiplier
+           :resample-context resample-context)))
+
+
+(defn resample-init-frame [frame output-format]
+  (let [{:keys [sample-format
+                sample-rate]} output-format
+
+        ch-layout (:ch-layout output-format)
+        ;; create our own copy since original copy may change :(
+        #_(av_channel_layout_copy ch-layout
+                              (:ch-layout output-format))
+        #_(dt-struct/new-struct :AVChannelLayout {:container-type :native-heap})
+        
+        output-frame-size (or (:frame-size output-format)
+                              (int 1024))
+        frame (doto frame
+                ;; set to output-frame size
+                ;; for av_frame_get_buffer
+                (.put :nb_samples output-frame-size)
+                (.put :format sample-format)
+                (.put :sample_rate sample-rate))]
+
+        (assert
+         (zero? (av_channel_layout_copy
+                 (:ch_layout frame)
+                 ch-layout)))
+        (assert
+         (>= (av_frame_get_buffer frame 0)
+             0))
+        ;; set back to zero now that we've
+        ;; alloced the frame's buffer
+        ;; we'll be using nb_samples to keep
+        ;; track of how many samples we've collected
+        ;; as we go.
+        (.put frame :nb_samples (int 0))
+        
+        frame))
+
+(defn resample-audio-thread [output-format
+                             ;; chans
+                             ;; ins
+                             in-frame-chan
+                             fresh-frame-chan
+                             ;; outs
+                             ready-frame-chan
+                             out-frame-chan
+                             recycle-frame-chan
+                             ]
+  (async/thread
+   (try
+     (loop [state {}
+            output-frame nil]
+       (async/>!! ready-frame-chan true)
+       (if-let [msg (async/<!! in-frame-chan)]
+         (do
+           (case (:type msg)
+             :stream-opened
+             (let [state (assoc state :input-format (:format msg))]
+               (async/>!! out-frame-chan {:type :stream-opened
+                                          :format output-format})
+               (recur (resample-init state
+                                     output-format)
+                      output-frame))
+             
+             :new-frame
+             (let [
+                   input-frame (:frame msg)
+                   output-frame (or output-frame
+                                    (resample-init-frame (async/<!! fresh-frame-chan)
+                                                         output-format))
+                   num-samples (:nb_samples input-frame)
+                   current-samples (:nb_samples output-frame)
+                   samples-wanted (- (:output-frame-size state)
+                                     current-samples)
+                   
+                   ;; data-ptr (into-array Pointer
+                   ;;                      (eduction
+                   ;;                       (map (fn [p]
+                   ;;                              (when p
+                   ;;                                (.share (.getPointer p)
+                   ;;                                        (* sample-offset-multiplier
+                   ;;                                           current-samples)))))
+                   ;;                       (:data output-frame)))
+                   data-ptr (dt/make-container :native-heap :int64
+                                               (into []
+                                                     (map (fn [p]
+                                                            (when (not (zero? p))
+                                                              (+ p (* (:sample-offset-multiplier state)
+                                                                      current-samples)))))
+                                                     (:data output-frame)))
+                   
+                   err (swr_convert (:resample-context state)
+                                    data-ptr samples-wanted
+                                    (:extended_data input-frame) num-samples)]
+               (async/put! recycle-frame-chan input-frame)
+               
+               (when (neg? err)
+                 (throw (Exception. "Error resampling.")))
+               
+               (if (pos? err)
+                 (let [total-samples (+ err current-samples)]
+                   (.put output-frame :nb_samples (int total-samples))
+                   (if (= total-samples (:output-frame-size state))
+                     (do
+                       (async/>!! out-frame-chan {:frame  output-frame
+                                                  :type :new-frame})
+                       (recur state nil))
+                     ;; not enough samples yet
+                     (recur state output-frame)))
+                 ;; else
+                 (recur state output-frame)))
+             
+             :stream-closed
+             (let [output-frame
+                   (loop [output-frame output-frame]
+                     (let [output-frame (or output-frame 
+                                            (resample-init-frame
+                                             (async/<!! fresh-frame-chan)
+                                             output-format))
+                           current-samples (:nb_samples output-frame)
+                           samples-wanted (- (:output-frame-size state)
+                                             current-samples)
+                           
+                           ;; data-ptr (into-array Pointer
+                           ;;                      (eduction
+                           ;;                       (map (fn [p]
+                           ;;                              (when p
+                           ;;                                (.share (.getPointer p)
+                           ;;                                        (* sample-offset-multiplier
+                           ;;                                           current-samples)))))
+                           ;;                       (:data output-frame)))
+                           data-ptr (dt/make-container :native-heap :int64
+                                                       (into []
+                                                             (map (fn [p]
+                                                                    (if (zero? p)
+                                                                      0
+                                                                      ;; else
+                                                                      (+ p (* (:sample-offset-multiplier state)
+                                                                              current-samples)))))
+                                                             (:data output-frame)))
+                           
+                           err (swr_convert (:resample-context state)
+                                            data-ptr (:output-frame-size state)
+                                            nil 0)]
+                       (cond
+                         
+                         (neg? err)
+                         (throw (Exception. "Error flushing audio resampler."))
+                         
+                         :else
+                         (let [total-samples (+ err current-samples)]
+                           (.put output-frame :nb_samples (int total-samples))
+                           (if (pos? total-samples)
+                             (do (async/>!! out-frame-chan {:frame output-frame
+                                                            :type :new-frame})
+                                 (if (= total-samples (:output-frame-size state))
+                                   (recur nil)
+                                   nil))
+                             ;; else, frame is still fresh
+                             output-frame)))))
+                   state (resample-close state)]
+               (async/>!! out-frame-chan {:type :stream-closed})
+               (recur state output-frame))))
+         ;; else, frame-chan closed. do cleanup
+         (resample-close state)))
+     (catch Throwable t
+       (tap> t)
+       (prn t))
+     (finally
+       (println "exiting resample audio.")))))
+
+(defn resample-audio-proc
+  "Assuming mono."
+  []
+  {:describe (fn []
+               {
+                :params {:output-format "The output format"
+                         :fresh-frame-chan "Channel to get fresh frames from."}
+                :ins {:in "frames to resample"}
+                :outs {:out "resampled frames"
+                       :recycle-frame "Frames to recycle"}})
+   :init (fn [{:keys [fresh-frame-chan output-format] :as state}]
+           (let [internal-input-frame-chan (async/chan)
+                 ready-for-frame-chan (async/chan 1)
+                 internal-recycle-chan (async/chan 1)
+                 internal-output-frame-chan (async/chan 5)]
+             (resample-audio-thread output-format
+                                    internal-input-frame-chan
+                                    fresh-frame-chan
+                                    ready-for-frame-chan
+                                    internal-output-frame-chan
+                                    internal-recycle-chan)
+             (assoc state
+                    ::flow/in-ports {:internal/ready-for-frame ready-for-frame-chan
+                                     :internal/output-frame internal-output-frame-chan
+                                     :internal/recycle internal-recycle-chan}
+                    ::flow/out-ports {:internal/input-frame internal-input-frame-chan})))
+   :transition (fn [state status]
+                 (if  (= status ::flow/stop)
+                   (do
+                     (-> state ::flow/in-ports :internal/ready-for-frame  async/close!)
+                     (-> state ::flow/in-ports :internal/output-frame  async/close!)
+                     (-> state ::flow/in-ports :internal/recycle  async/close!)
+                     (-> state ::flow/out-ports :internal/input-frame  async/close!)
+                     state)
+                   state))
+   :transform
+   (fn [state in msg]
+     (case in
+       :in [(assoc state ::flow/input-filter (fn [cid]
+                                               (not= cid :in)))
+            {:internal/input-frame [msg]}]
+       :internal/ready-for-frame [(dissoc state ::flow/input-filter)]
+       :internal/recycle [state
+                          {:recycle-frame [msg]}]
+       :internal/output-frame [state {:out [msg]}]))})
+
 
 (defn frame->buf [frame]
   (assert
