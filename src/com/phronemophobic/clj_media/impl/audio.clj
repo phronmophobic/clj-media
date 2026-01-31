@@ -203,7 +203,7 @@
                             (.start))]
      
      (fn
-       ([])
+       ([] 0)
        ([read-bytes]
         (.drain source-data-line)
         (.close source-data-line)
