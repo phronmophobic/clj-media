@@ -630,7 +630,7 @@
   [o _ k v])
 (defmethod set-option :avoption-type/float
   [o _ k v]
-  (av_opt_set_double o k v AV_OPT_SEARCH_CHILDREN))
+  (av_opt_set_double o (dt-ffi/string->c k) v AV_OPT_SEARCH_CHILDREN))
 (defmethod set-option :avoption-type/rational
   [o _ k v]
   (when-not (ratio? v)
@@ -638,7 +638,7 @@
                     {:o o
                      :k k
                      :v v})))
-  (av_opt_set_q o k
+  (av_opt_set_q o (dt-ffi/string->c k)
                 (->avrational (numerator v)
                               (denominator v))
                 AV_OPT_SEARCH_CHILDREN))
@@ -647,19 +647,19 @@
   (set-option o :avoption-type/int64 k v))
 (defmethod set-option :avoption-type/int64
   [o _ k v]
-  (av_opt_set_int o k v AV_OPT_SEARCH_CHILDREN))
+  (av_opt_set_int o (dt-ffi/string->c k) v AV_OPT_SEARCH_CHILDREN))
 (defmethod set-option :avoption-type/double
   [o _ k v]
-  (av_opt_set_double o k v AV_OPT_SEARCH_CHILDREN))
+  (av_opt_set_double o (dt-ffi/string->c k) v AV_OPT_SEARCH_CHILDREN))
 (defmethod set-option :avoption-type/int
   [o _ k v]
-  (av_opt_set_int o k v AV_OPT_SEARCH_CHILDREN))
+  (av_opt_set_int o (dt-ffi/string->c k) v AV_OPT_SEARCH_CHILDREN))
 #_(defmethod set-option :avoption-type/dict
   [o _ k v])
 (defmethod set-option :avoption-type/image-size
   [o _ k v]
   (let [[w h] v]
-   (av_opt_set_image_size o k w h AV_OPT_SEARCH_CHILDREN)))
+   (av_opt_set_image_size o (dt-ffi/string->c k) w h AV_OPT_SEARCH_CHILDREN)))
 (defmethod set-option :avoption-type/video-rate
   [o _ k v]
   (let [ratio
@@ -676,7 +676,7 @@
    (av_opt_set_video_rate o k ratio AV_OPT_SEARCH_CHILDREN)))
 (defmethod set-option :avoption-type/string
   [o _ k v]
-  (av_opt_set o k v AV_OPT_SEARCH_CHILDREN))
+  (av_opt_set o (dt-ffi/string->c k) (dt-ffi/string->c v) AV_OPT_SEARCH_CHILDREN))
 #_(defmethod set-option :avoption-type/const
   [o _ k v])
 (defmethod set-option :avoption-type/sample-fmt
@@ -694,7 +694,7 @@
                       {:o o
                        :k k
                        :v v})))
-    (av_opt_set_sample_fmt o k fmt AV_OPT_SEARCH_CHILDREN)))
+    (av_opt_set_sample_fmt o (dt-ffi/string->c k) fmt AV_OPT_SEARCH_CHILDREN)))
 (defmethod set-option :avoption-type/pixel-fmt
   [o _ k v]
   (let [kw->pixel-format
@@ -710,16 +710,16 @@
                       {:o o
                        :k k
                        :v v})))
-    (av_opt_set_pixel_fmt o k pix-fmt AV_OPT_SEARCH_CHILDREN)))
+    (av_opt_set_pixel_fmt o (dt-ffi/string->c k) pix-fmt AV_OPT_SEARCH_CHILDREN)))
 #_(defmethod set-option :avoption-type/binary
   [o _ k v])
 (defmethod set-option :avoption-type/color
   [o _ k v]
   (assert (string? v) "Colors must be string.")
-  (av_opt_set o k v AV_OPT_SEARCH_CHILDREN))
+  (av_opt_set o (dt-ffi/string->c k) (dt-ffi/string->c v) AV_OPT_SEARCH_CHILDREN))
 (defmethod set-option :avoption-type/bool
   [o _ k v]
-  (av_opt_set_int o k
+  (av_opt_set_int o (dt-ffi/string->c k)
                   (case v
                     (true 1) 1
                     ;; else
