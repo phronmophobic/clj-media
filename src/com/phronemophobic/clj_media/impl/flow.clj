@@ -247,21 +247,6 @@
       java.lang.AutoCloseable
       (close [_]
         (raw/avio_closep output-io-context*)
-        (raw/avformat_free_context output-format-context)))
-
-    #_(proxy [Pointer
-            clojure.lang.ILookup
-            java.lang.AutoCloseable]
-      [(Pointer/nativeValue (.getPointer output-format-context))]
-        (valAt [k]
-        (case k
-          :oformat (:oformat output-format-context)
-          :pb (:pb output-format-context)
-          
-          ;; else
-          nil))
-      (close []
-        (raw/avio_closep output-io-context*)
         (raw/avformat_free_context output-format-context)))))
 
 
@@ -320,21 +305,7 @@
       java.lang.AutoCloseable
       (close [_]
         (prn "closing decoder context")
-        (raw/avcodec_free_context (dt-ffi/make-ptr :pointer (.address (dt-ffi/->pointer decoder-context))))
-        ))
-    ;; (proxy [Pointer
-    ;;         clojure.lang.ILookup
-    ;;         java.lang.AutoCloseable]
-    ;;   [(Pointer/nativeValue (.getPointer decoder-context))]
-    ;;   (valAt [k]
-    ;;     (case k
-    ;;       :format format
-          
-    ;;       ;; else
-    ;;       nil))
-    ;;   (close []
-    ;;     (raw/avcodec_free_context (PointerByReference. decoder-context))))
-))
+        (raw/avcodec_free_context (dt-ffi/make-ptr :pointer (.address (dt-ffi/->pointer decoder-context))))))))
 
 (comment
   
@@ -728,11 +699,6 @@
                   state)
           
           state (case (:status state)
-                  #_#_:closed (assoc state
-                                     ::flow/input-filter
-                                     (fn [id]
-                                       (or (not (contains? ins id))
-                                           (:ready? state))))
                   (:opening :closed) (assoc state
                                             ::flow/input-filter
                                             (fn [id] 
@@ -964,16 +930,11 @@
        :recycle-packet
        [state {:internal/recycle-packet [msg]}]))})
 
-;; 
-
 (defn frame-recycler []
   {:describe (fn []
                {:params {:n "Number of frames"
                          :fresh-frame-chan "Channel to put fresh frames on."}
-                :ins {:recycle-frame "frames to recycle"}
-                :outs {;;:fresh-frame "Fresh frames"
-                       
-                       }})
+                :ins {:recycle-frame "frames to recycle"}})
    :init (fn [{:keys [n fresh-frame-chan] :as state}]
            (let [recycle-frame-internal (async/chan 10)
                  update-state-chan (async/chan (async/sliding-buffer 1))]
@@ -1007,9 +968,7 @@
              (assoc state
                     ::flow/out-ports {;;:fresh-frame fresh-frame-chan
                                       :internal/recycle-frame recycle-frame-internal}
-                    ::flow/in-ports {:update-state update-state-chan}
-                    ;;::produce true
-                    )))
+                    ::flow/in-ports {:update-state update-state-chan})))
    :transition (fn [state status] 
                  (if (= status ::flow/stop)
                    (do
@@ -1425,12 +1384,6 @@
                            {:recycle-packet [msg]}]
        :internal/frame2 [state {:frame [msg]}]))})
 
-(defn file->frames-flow [fname])
-;; how to deal with more than 2 streams?
-(defn frames->file [fname streams opts]
-  (let [;; {:keys [audio-format video-format] :as opts} streams
-        ]))
-
 #_(defn undatafy-audio-format [{:keys [channel-layout
                                      sample-format
                                      sample-rate]}]
@@ -1522,15 +1475,7 @@
                                            flow/map->step
                                            flow/process)
                                  :args {:opts {}
-                                        :output-format {;; :width 720
-                                                        ;; :height 576
-                                                        ;; :time-base (av/->avrational
-                                                        ;;             1 12800)
-                                                        :pixel-format (media.datafy/kw->pixel-format :pixel-format/yuv420p)
-                                                        
-                                                        
-                                                        ;;:media-type :media-type/video
-                                                        }
+                                        :output-format {:pixel-format (media.datafy/kw->pixel-format :pixel-format/yuv420p)}
                                         :filter-name "edgedetect"
                                         :fresh-frame-chan fresh-frame-chan}}
                
