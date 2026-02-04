@@ -471,15 +471,15 @@
 
         _ (assert
            (zero? (av_channel_layout_copy
-                   (.getPointer (:ch_layout encoder-context))
-                   (.getPointer ch-layout))))
+                   (:ch_layout encoder-context)
+                   ch-layout)))
 
         _ (doto encoder-context
             ;; (.writeField "ch_layout" ch-layout)
-            (.writeField "sample_rate" sample-rate)
-            (.writeField "sample_fmt" sample-fmt)
-            (.writeField "bit_rate" bit-rate)
-            (.writeField "time_base" (->avrational 1 sample-rate)))]
+            (.put :sample_rate sample-rate)
+            (.put :sample_fmt sample-fmt)
+            (.put :bit_rate bit-rate)
+            (.put :time_base (->avrational 1 sample-rate)))]
 
     encoder-context))
 
