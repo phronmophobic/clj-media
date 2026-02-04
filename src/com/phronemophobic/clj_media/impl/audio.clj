@@ -1,4 +1,5 @@
 (ns com.phronemophobic.clj-media.impl.audio
+  (:refer-clojure :exclude [prn])
   (:require [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.av :as av]
             [clojure.core.async :as async]
@@ -13,15 +14,7 @@
              :refer :all]
             [clojure.pprint :refer [pprint]])
   (:import
-   ;; com.sun.jna.Memory
-   ;; com.sun.jna.Pointer
-   ;; com.sun.jna.ptr.PointerByReference
-   ;; com.sun.jna.ptr.IntByReference
-   ;; com.sun.jna.ptr.LongByReference
-   ;; com.sun.jna.ptr.ByteByReference
-   ;; com.sun.jna.Structure
    java.io.ByteArrayOutputStream
-
    (javax.sound.sampled AudioFormat
                         AudioFormat$Encoding
                         AudioInputStream
@@ -39,6 +32,10 @@
 
    )
   (:gen-class))
+
+(defn prn [& args]
+  (locking clojure.core/prn
+    (apply clojure.core/prn args)))
 
 (defn pf [& args]
   (apply prn args)
@@ -483,6 +480,8 @@
 
 
 (defn resample-init-frame [frame output-format]
+  (assert (= :media-type/audio (:media-type output-format))
+          "Resample is audio only.")
   (let [{:keys [sample-format
                 sample-rate]} output-format
 
@@ -651,7 +650,6 @@
        (println "exiting resample audio.")))))
 
 (defn resample-audio-proc
-  "Assuming mono."
   []
   {:describe (fn []
                {
