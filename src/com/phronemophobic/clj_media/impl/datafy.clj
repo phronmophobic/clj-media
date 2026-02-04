@@ -206,6 +206,60 @@
            (recur o (conj opts (d/datafy o)))
            opts))))})
 
+(def av-format-flags
+  {:AVFMT_NOFILE       0x0001
+   :AVFMT_NEEDNUMBER   0x0002
+   :AVFMT_GLOBALHEADER 0x0040
+   :AVFMT_NOTIMESTAMPS 0x0080
+   :AVFMT_VARIABLE_FPS 0x0400
+   :AVFMT_NODIMENSIONS 0x0800
+   :AVFMT_NOSTREAMS    0x1000
+   :AVFMT_TS_NONSTRICT 0x20000
+   :AVFMT_TS_NEGATIVE  0x40000})
+
+(def flag->avformat-kw
+  (into {}
+        (map (fn [[k v]]
+               [v k]))
+        av-format-flags))
+
+
+(declare codec-id->kw)
+(defmethod datafy-struct :AVOutputFormat [oformat]
+  (let [m (into {}
+                (keep (fn [kw]
+                        
+                        (when-let [ptr (get oformat kw)]
+                          [kw (dt-ffi/c->string ptr)])))
+                [:name :long_name :mime_type])
+        
+        m (into m
+                (keep (fn [kw]
+                        (let [n (get oformat kw)]
+                          (when-let [v (codec-id->kw n)]
+                            [kw v]))))
+                [:audio_codec
+                 :video_codec
+                 :subtitle_codec])
+
+        m (let [extensions-ptr (:extensions oformat)]
+            (if (not (zero? extensions-ptr))
+              (assoc m
+                     :extensions
+                     (str/split (dt-ffi/c->string extensions-ptr)
+                                #","))
+              m))
+        
+        flags (:flags oformat)
+        flag-kws (into #{}
+                        (keep (fn [[int kw]]
+                               (when (not (zero? (bit-and flags int)))
+                                 kw)))
+                        flag->avformat-kw)
+        m (assoc m :flags flag-kws)]
+    
+    m))
+
 (defn filter-options [flt]
   (let [cls (:priv_class flt)]
     (when cls
@@ -368,6 +422,27 @@
    (map (fn [[k v]]
           [v k]))
    pixel-format->kw))
+
+
+(def codec-id->kw
+  (->> (:enums raw/av-api)
+       (filter (fn [enum]
+                 (= "AVCodecID" (:enum enum))))
+       (map (juxt :value
+                  (fn [enum]
+                    (keyword "codec-id"
+                             
+                             (-> (subs (:name enum)
+                                       (count "AV_CODEC_ID_"))
+                                 normalize-str)))))
+       (into {})))
+
+(def kw->codec-id
+  (into
+   {}
+   (map (fn [[k v]]
+          [v k]))
+   codec-id->kw))
 
 (def sample-format->kw
   (->> (:enums raw/av-api)
@@ -735,14 +810,52 @@
           (recur (conj flts (d/datafy flt)))
           flts)))))
 
+(defn list-formats []
+  (let [iter-data (dt-ffi/make-ptr :pointer 0)]
+    (loop [formats []]
+      (let [format (av_muxer_iterate iter-data)]
+        (if format
+          (recur (conj formats (d/datafy format)))
+          formats)))))
+
+(defn list-codecs []
+  (let [iter-data (dt-ffi/make-ptr :pointer 0)]
+    (loop [codecs []]
+      (let [codec (av_codec_iterate iter-data)]
+        (if codec
+          (recur (conj codecs codec))
+          codecs)))))
+
+(defn list-muxers2
+  "Like list-formats, but also lists which codecs are available."
+  ;; https://stackoverflow.com/a/76558896
+  []
+  (let [iter-data (dt-ffi/make-ptr :pointer 0)
+        codecs (list-codecs)]
+    (loop [formats []]
+      (let [format (av_muxer_iterate iter-data)]
+        (if format
+          (let [available-codecs
+                (into []
+                      (comp
+                       (filter (fn [codec]
+                                 (= 1
+                                    (avformat_query_codec format (:id codec)
+                                                          raw/FF_COMPLIANCE_NORMAL))))
+                       (map d/datafy))
+                      codecs)]
+            (recur (conj formats (assoc (d/datafy format)
+                                        :codecs available-codecs))))
+          formats))))
+  
+
+  )
+
 (comment
   (list-filters)
+  (list-formats)
+  
   ,)
-
-;; (defmulti set-option
-;;   (fn [obj class-name k v]
-;;     [class-name k]))
-
 (defn set-filter-context-options [filter-context filter-name opts]
   (doseq [[k v] opts]
     (set-option filter-context [filter-name k] k v)))
