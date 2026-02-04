@@ -367,23 +367,37 @@
 
 
 
-(defn audio-filter-init [state filter-name input-formats opts]
+(defn filter-state-init [state filter-name input-formats output-format opts]
   (let [filter-graph (avfilter_graph_alloc)
         
+        output-format (merge (first input-formats)
+                             output-format)
+        
+        media-type (:media-type output-format)
         
         input-contexts
         (into []
               (map (fn [input-format]
-                     (let [buffer (avfilter_get_by_name (dt-ffi/string->c "abuffer"))
+                     (let [buffer (avfilter_get_by_name (dt-ffi/string->c
+                                                         (case media-type
+                                                           :media-type/audio "abuffer"
+                                                           :media-type/video "buffer")))
                            _ (when (nil? buffer)
                                (throw (Exception.)))
                            buffer-context (avfilter_graph_alloc_filter filter-graph buffer nil)
                            
-                           args (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
-                                        (datafy-media/ch-layout->str
-                                         (:ch-layout input-format ))
-                                        (:sample-format input-format)
-                                        (:sample-rate input-format))
+                           args (case media-type
+                                  :media-type/audio (format "channel_layout=%s:sample_fmt=%d:sample_rate=%d"
+                                                            (datafy-media/ch-layout->str
+                                                             (:ch-layout input-format ))
+                                                            (:sample-format input-format)
+                                                            (:sample-rate input-format))
+                                  :media-type/video (format "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d"
+                                                            (:width input-format)
+                                                            (:height input-format)
+                                                            (:pixel-format input-format)
+                                                            (-> input-format :time-base :num)
+                                                            (-> input-format :time-base :den)))
                            
                            err (avfilter_init_str buffer-context (dt-ffi/string->c args))
                            _ (when (not (zero? err))
@@ -395,7 +409,10 @@
                      ))
               input-formats)
         
-        buffersink (avfilter_get_by_name (dt-ffi/string->c "abuffersink"))
+        buffersink (avfilter_get_by_name (dt-ffi/string->c
+                                          (case media-type
+                                            :media-type/audio "abuffersink"
+                                            :media-type/video "buffersink")))
         _ (when (nil? buffersink)
             (throw (Exception.)))
         buffersink-context* (dt-ffi/make-ptr :pointer 0)
@@ -410,11 +427,25 @@
         
         ;; sample-fmts (doto (IntByReference.)
         ;;               (.setValue (:sample-format (first input-formats))))
-        sample-fmts (dt-ffi/make-ptr :int32 (:sample-format (first input-formats))) 
-        _ (av_opt_set_bin buffersink-context (dt-ffi/string->c "sample_fmts")
-                          sample-fmts
-                          (* 1 4)
+        _ (case media-type
+            :media-type/audio
+            (let [sample-fmts (dt-ffi/make-ptr :int32 (:sample-format output-format)) ]
+              (av_opt_set buffersink-context
+                          (dt-ffi/string->c "ch_layouts") 
+                          (dt-ffi/string->c (datafy-media/ch-layout->str (:ch-layout output-format)))
                           AV_OPT_SEARCH_CHILDREN)
+              (av_opt_set_bin buffersink-context (dt-ffi/string->c "sample_fmts")
+                              sample-fmts
+                              (* 1 4)
+                              AV_OPT_SEARCH_CHILDREN))
+            
+            :media-type/video
+            (let [pix-fmts (dt-ffi/make-ptr
+                            :pointer (:pixel-format output-format))]
+              (av_opt_set_bin buffersink-context (dt-ffi/string->c "pix_fmts")
+                              pix-fmts
+                              (* 1 4)
+                              AV_OPT_SEARCH_CHILDREN)))
         
         ;; create the filter
         filter-context (avfilter_graph_alloc_filter
@@ -442,28 +473,34 @@
             (throw (Exception.)))
         
         time-base (av_buffersink_get_time_base buffersink-context)
-        ch-layout (dt-struct/new-struct :AVChannelLayout 
-                                        {:container-type :native-heap})
-        _ (prn input-formats)
-        _ (av_channel_layout_copy ch-layout
-                                  (:ch-layout (first input-formats)))
-        output-format
-        {:sample-rate (av_buffersink_get_sample_rate buffersink-context)
-         :sample-format (av_buffersink_get_format buffersink-context)
-         ;; assume channel layout doesn't change
-         :ch-layout ch-layout
-         ;; copy structs. known to mutate in place
-         :time-base (av/->avrational (:num time-base)
-                                     (:den time-base))
-         :media-type :media-type/audio}]
 
+        output-format
+        (case media-type
+          :media-type/audio {:sample-rate (av_buffersink_get_sample_rate buffersink-context)
+                             :sample-format (av_buffersink_get_format buffersink-context)
+                             ;; assume channel layout doesn't change
+                             :ch-layout (let [ch-layout (dt-struct/new-struct :AVChannelLayout 
+                                                                              {:container-type :native-heap})
+                                              err (av_buffersink_get_ch_layout buffersink-context ch-layout)]
+                                          ch-layout
+                                          )
+                             ;; copy structs. known to mutate in place
+                             :time-base (av/->avrational (:num time-base)
+                                                         (:den time-base))
+                             :media-type :media-type/audio}
+          :media-type/video{:width (av_buffersink_get_w buffersink-context)
+                            :height (av_buffersink_get_h buffersink-context)
+                            ;; copy. time bases known to mutate in place
+                            :time-base (av/->avrational (:num time-base)
+                                                        (:den time-base))
+                            :pixel-format (av_buffersink_get_format buffersink-context)
+                            :media-type :media-type/video})]
     {:output-format output-format
      :filter-graph filter-graph
      :buffersink-context buffersink-context
-     :input-contexts input-contexts
-     }))
+     :input-contexts input-contexts}))
 
-(defn audio-filter-close [state]
+(defn filter-state-close [state]
   (when-let [filter-graph (:filter-graph state)]
     (avfilter_graph_free (dt-ffi/make-ptr
                           :pointer
@@ -472,20 +509,16 @@
                               .address))))
   (dissoc state :filter-graph))
 
-(defn audio-filter-thread [filter-name
-                           ;; ins
-                           opts
-                           ;; inputs
-                           in-chans
-                           fresh-frame-chan
-                           
-
-                           ;; outputs
-                           ready-frame-chan
-                           out-chan
-                           recycle-frame-chan
-                           
-                           ]
+(defn filter-proc-thread [filter-name
+                          opts
+                          output-format
+                          ;; inputs
+                          in-chans
+                          fresh-frame-chan
+                          ;; outputs
+                          ready-frame-chan
+                          out-chan
+                          recycle-frame-chan]
   (let [port->idx (into {}
                         (map-indexed (fn [i ch]
                                        [ch i]))
@@ -498,7 +531,7 @@
          (let [[msg port] (async/alts!! in-chans)]
            (if (nil? msg)
              ;; frame-chan closed. do cleanup
-             (audio-filter-close state)
+             (filter-state-close state)
              ;; else, process message
              (case (:type msg)
                :stream-opened
@@ -512,7 +545,7 @@
                                                                            (->> (:input-formats state)
                                                                                 (sort-by first)
                                                                                 (map second))))
-                                   state (audio-filter-init state filter-name (:input-formats state) opts)]
+                                   state (filter-state-init state filter-name (:input-formats state) output-format opts)]
                                (async/>!! out-chan {:type :stream-opened
                                                     :format (:output-format state)})
                                state)
@@ -592,7 +625,7 @@
                              (do 
                                (async/>!! out-chan {:type :stream-closed})
                                (-> state
-                                   (audio-filter-close)
+                                   (filter-state-close)
                                    (assoc :closed #{})
                                    (dissoc :input-formats))))]
                  (recur state output-frame))))))
@@ -602,8 +635,7 @@
        (finally
          (println "exiting filter"))))))
 
-(defn wrap-audio-filter-input-filter [ins transform]
-  ;; flow/in-ports keep track of which inputs are not opened.
+(defn wrap-filter-input-filter [ins transform]
   (fn [state in msg]
     (let [[state outs] (transform state in msg)
           
@@ -627,12 +659,13 @@
                   state)
           
           state (case (:status state)
-                  :closed (dissoc state ::flow/input-filter)
-                  :opening (assoc state
-                                  ::flow/input-filter
-                                  (fn [id] 
-                                    (not (contains? (:ready-ins state)
-                                                    id))))
+                  (:closed :opening) (assoc state
+                                            ::flow/input-filter
+                                            (fn [id] 
+                                              (or (not (contains? ins id))
+                                                  (and (not (contains? (:ready-ins state)
+                                                                       id))
+                                                       (:ready? state)))))
                   (:open :closing) (assoc state
                                           ::flow/input-filter 
                                           (fn [id]
@@ -641,7 +674,7 @@
                                                      (:ready? state))))))]
       [state outs])))
 
-(defn audio-filter-proc
+(defn filter-proc
   "`ins` be a vector of [id doc].
   
   `ins` must be ordered because filter inputs are ordered."
@@ -649,7 +682,8 @@
   {:describe (fn []
                {:params {:filter-name "Name of the avfilter"
                          :filter-options "Options to pass to the filter" 
-                         :fresh-frame-chan "Channel to get fresh frames from."}
+                         :fresh-frame-chan "Channel to get fresh frames from."
+                         :output-format "optional output-format"}
                 :ins (into {} ins)
                 :outs {:out "filtered frames"
                        :recycle-frame "Frames to recycle"}})
@@ -663,13 +697,14 @@
                  internal-ready-for-frame-chan (async/chan 1)
                  internal-recycle-chan (async/chan 1)
                  internal-output-frame-chan (async/chan 5)]
-             (audio-filter-thread filter-name
-                                  opts
-                                  internal-in-chans
-                                  fresh-frame-chan
-                                  internal-ready-for-frame-chan
-                                  internal-output-frame-chan
-                                  internal-recycle-chan)
+             (filter-proc-thread filter-name
+                                 opts
+                                 (:output-format state)
+                                 internal-in-chans
+                                 fresh-frame-chan
+                                 internal-ready-for-frame-chan
+                                 internal-output-frame-chan
+                                 internal-recycle-chan)
              (assoc state
                     :status :closed
                     :ready? true
@@ -691,16 +726,19 @@
                      state)
                    state))
    :transform
-   (wrap-audio-filter-input-filter
+   (wrap-filter-input-filter
     (into #{} (map first) ins)
     (fn [state in msg]
       (case in
-        :in [(assoc state :ready? false)
-             {(get-in state [:in->internal in]) [msg]}]
+        
         :internal/ready-for-frame [(assoc state :ready? true)]
         :internal/recycle [state
                            {:recycle-frame [msg]}]
-        :internal/output-frame [state {:out [msg]}])))})
+        :internal/output-frame [state {:out [msg]}]
+        
+        ;; else
+        [(assoc state :ready? false)
+         {(get-in state [:in->internal in]) [msg]}])))})
 
 
 (defrecord AVFilterMedia [filter-name opts media-type media]
@@ -1562,10 +1600,6 @@
              (comp (filter supported-filter-type?)
                    (map filter-fn))
              (list-filters))))
-
-#_(->> (list-filters)
-     (filter supported-filter-type?)
-     )
 
 
 (defrecord ForceFormat [format media]
