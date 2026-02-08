@@ -1169,7 +1169,9 @@
                               :type :decode-error})))))))}))
 
 
-(defn file->packets-proc2 []
+(defn file->packets-proc2
+  "Like file->packets-proc, but file is set via param."
+  []
   (wrap-producer
    {:describe (fn []
                 {:ins {}
@@ -1686,6 +1688,76 @@
                  n)))
 
 
+(defn merge-flows
+  "Combine :conns and :procs from all gs."
+  [& gs]
+  (reduce
+   (fn [g1 g2]
+     (merge
+      (when (or (:procs g1) (:procs g2))
+        {:procs (merge (:procs g1)
+                       (:procs g2))})
+      (when (or (:conns g1) (:conns g2))
+        {:conns (into [] cat [(:conns g1) (:conns g2)])})
+      (dissoc g1 :conns :procs)
+      (dissoc g2 :conns :procs)))
+   (first gs)
+   (next gs)))
+
+(defn gen-pid [prefix]
+  (-> (gensym (str prefix "-")) name keyword))
+
+
+(defmulti ->frame-flow (fn [media stream format]
+                         (:type media)))
+
+(defmethod ->frame-flow :avfilter [media stream format]
+  (let [{:keys [filter-name opts inputs]} media
+
+        input-flows (into []
+                          (map #(->frame-flow % stream format))
+                          inputs)
+
+        filter-ins (into []
+                         (map (fn [i]
+                                [(keyword (str "in" i)) "useless docstring"]))
+                         (range (count input-flows)))
+
+        proc {:proc (-> (avfilter/filter-proc filter-ins)
+                        flow/map->step
+                        flow/process)
+              :args {:opts {}
+                     #_#_:output-format
+                     (case (:media-type format)
+                       :media-type/video {:pixel-format (media.datafy/kw->pixel-format (:pixel-format format))
+                                          :media-type :media-type/video}
+                       :media-type/audio
+                       (let [{:keys [channel-layout
+                                     sample-format
+                                     sample-rate]} format]
+                         {:ch-layout (media.datafy/str->ch-layout channel-layout)
+                          :sample-format (media.datafy/kw->sample-format sample-format)
+                          :sample-rate sample-rate
+                          :media-type :media-type/audio}))
+                     :filter-name filter-name}}
+        
+
+        g (apply merge-flows input-flows)
+        pid (gen-pid filter-name)
+        
+        conns (into []
+                    (map-indexed (fn [i {:keys [out-coord]}]
+                                   [out-coord [pid (keyword (str "in" i))]]))
+                    input-flows)
+        g (merge-flows g
+                       {:procs {pid proc}
+                        :conns conns
+                        :out-coord [pid :out]})]
+    g))
+
+
+
+
 (defn frames-flow
   "Creates a flow for receiving frames from a a media source.
   
@@ -1693,7 +1765,7 @@
   A channel for recycling frames must be assoc-in to [:procs ::frame-recycler :args :recycle-frame].
 
   "
-  [media stream]
+  [media stream format]
   ;; assume media is a file?
   (let [file (io/file (:file media))
 
@@ -1732,7 +1804,18 @@
                                          flow/map->step
                                          flow/process)
                                :args {:opts {}
-                                      :output-format {:pixel-format (media.datafy/kw->pixel-format :pixel-format/bgra)}
+                                      :output-format
+                                      (case (:media-type format)
+                                        :media-type/video {:pixel-format (media.datafy/kw->pixel-format (:pixel-format format))
+                                                           :media-type :media-type/video}
+                                        :media-type/audio
+                                        (let [{:keys [channel-layout
+                                                      sample-format
+                                                      sample-rate]} format]
+                                          {:ch-layout (media.datafy/str->ch-layout channel-layout)
+                                           :sample-format (media.datafy/kw->sample-format sample-format)
+                                           :sample-rate sample-rate
+                                           :media-type :media-type/audio}))
                                       :filter-name "null"}}
                    
                    :frame-out {:proc (flow/process
@@ -1754,20 +1837,30 @@
            :conns [
                    [[:media-packets :packet] [:stream-filter :in]]
                    [[:stream-filter :out] [:decoder :packet]]
-                   [[:decoder :frame] [:transcode :in]]
-                   [[:transcode :out] [:frame-out :in]]
-                   
-                   ;; [[:decoder ::recycle-packet] [:packet-recycler ::recycle-packet]]
-                   ;; [[:transcode :recycle-frame] [:frame-recycler :recycle-frame]]
-                   ;; [[:stream-filter ::recycle-packet] [:packet-recycler ::recycle-packet]]
-                   ]}]
+                   [[:transcode :out] [:frame-out :in]]]}]
     g))
 
+(defmethod ->frame-flow :file [media stream format]
+  (let [g (frames-flow media stream format)
+        g (assoc g :out-coord [:decoder :frame])]
+    g))
 
-(defn frames-reducible [media stream]
+(comment
+  (->frame-flow
+   {:type :avfilter
+    :filter-name "gblur"
+    :inputs [{:file media-fname
+              :type :file}]}
+   :video 
+   {:media-type :media-type/video
+    :pixel-format :pixel-format/bgra})
+  
+  ,)
+
+(defn frames-reducible [media stream format]
   (reify clojure.lang.IReduceInit
     (reduce [_ f init]
-      (let [g (frames-flow media stream)
+      (let [g (->frame-flow media stream format)
             frame-chan (async/chan 12)
             recycle-frame-chan (async/chan 10)
             
@@ -1776,6 +1869,9 @@
                   (add-packet-recycler)
                   (assoc-in [:procs :frame-out :args :chan] frame-chan)
                   (assoc-in [:procs ::frame-recycler :args :recycle-frame] recycle-frame-chan))
+            g (merge-flows
+               g
+               {:conns [[(:out-coord g) [:transcode :in]]]})
             
             flow (flow/create-flow g)
             _ (-> flow flow/start monitoring)
@@ -1806,7 +1902,8 @@
                      (swap! atm inc)))
         width 640
         height 360]
-    (run! (fn [frame]
+    (time
+     (run! (fn [frame]
             (prn (:pts frame))
             
             (let [linesize (-> frame :linesize first)
@@ -1820,8 +1917,41 @@
                                                     buf-size))
                        width height membrane.skia/kBGRA_8888_SkColorType membrane.skia/kOpaque_SkAlphaType 
                        linesize))))
-          (frames-reducible {:file media-fname} :video)))
+          (frames-reducible {:type :avfilter
+                             :filter-name "edgedetect"
+                             :inputs [{:type :avfilter
+                                       :filter-name "gblur"
+                                       :inputs [{:file media-fname
+                                                 :type :file}]}]}
+                            :video 
+                            {:media-type :media-type/video
+                             :pixel-format :pixel-format/bgra}))))
   (prn "done")
   (Thread/sleep (long 5e3)))
 
+
+(comment
+  (raw/av_regi)
+  ;; trimming 
+  (raw/avformat_seek_file)
+  ;; (raw/)
+  (raw/av_seek_frame)
+  
+  
+  ;; frames
+
+  (flow/create-flow
+   (->frame-flow
+    {:type :avfilter
+     :filter-name "edgedetect"
+     :inputs [{:type :avfilter
+               :filter-name "gblur"
+               :inputs [{:file media-fname
+                         :type :file}]}]}
+    
+    :video 
+    {:media-type :media-type/video
+     :pixel-format :pixel-format/bgra})
+   )
+  )
 
