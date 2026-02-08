@@ -1,12 +1,14 @@
 (ns com.phronemophobic.clj-media.impl.flow
   (:refer-clojure :exclude [prn])
   (:require [clojure.core.async.flow :as flow]
+            [clojure.core.async.flow.spi :as flow.spi]
             [clojure.core.async :as async]
+            [clojure.java.io :as io]
             [com.phronemophobic.clj-media.impl.filter.media :as fm]
             [com.phronemophobic.clj-media.impl.av :as av]
             [com.phronemophobic.clj-media.impl.raw :as raw]
             [com.phronemophobic.clj-media.impl.audio :as audio]
-            [com.phronemophobic.clj-media.impl.datafy :as media.datafy ]
+            [com.phronemophobic.clj-media.impl.datafy :as media.datafy]
             [com.phronemophobic.clj-media.impl.filter.avfilter :as avfilter]
             [tech.v3.tensor :as dtt]
             tech.v3.resource
@@ -15,7 +17,8 @@
             [tech.v3.datatype.ffi :as dt-ffi]
             [tech.v3.datatype.native-buffer :as native-buffer]
             [tech.v3.datatype.protocols :as dtype-proto]
-            [tech.v3.datatype.casting :as dt-casting]))
+            [tech.v3.datatype.casting :as dt-casting])
+  (:import java.util.Map))
 
 (def my-filter-name "aecho")
 (def media-fname "../clj-media/my-fade-in-out.mp4")
@@ -23,6 +26,9 @@
 (defn prn [& args]
   (locking clojure.core/prn
     (apply clojure.core/prn args)))
+
+(defn first-by [xf coll]
+  (transduce xf (completing (fn [_ x] (reduced x))) nil coll))
 
 
 (defonce in-transform (atom {}))
@@ -32,20 +38,6 @@
     (let [result (f state in msg)]
       (swap! in-transform assoc (::flow/pid state) false)
       result)))
-
-(defprotocol IEOFData
-  (eof-data? [_]))
-
-(extend-protocol IEOFData
-  Object
-  (eof-data? [_] false))
-
-(defrecord AEOFData []
-  IEOFData
-  (eof-data? [_] true))
-
-(defn make-eof-data []
-  (->AEOFData))
 
 
 (defn queue
@@ -61,6 +53,13 @@
 ;; - make names consistent 
 ;; - try to add back pressure by synchronizing on pts when writing to file
 ;; - make sure context vs ctx is used consistently
+;; - update impl.raw so that functions that pass strings don't need dt-ffi/string->c
+
+;; - need to figure the right way to set pts
+;; copying code from `filter.media` sets audio-pts, but not for video?
+;; but for video, the pts is rescaled.
+;; maybe we just need to do a better job of settings time_base on packets/frames?
+;; and rescaling as appropriate.
 
 ;; * Use cases
 ;; copy a media file
@@ -235,7 +234,7 @@
         output-format-context (dt-ffi/ptr->struct :AVFormatContext
                                                   (first output-format-context*))
         output-format-context (doto output-format-context
-                                (.put :pb (first output-io-context*)))]
+                                (Map/.put :pb (first output-io-context*)))]
     output-format-context
     (reify
       dt-ffi/PToPointer
@@ -266,7 +265,7 @@
             (throw (ex-info "Could not allocate decoder"
                             {})))
         _ (doto decoder-context
-            (.put :time_base (:time_base stream)))
+            (Map/.put :time_base (:time_base stream)))
         
         _ (raw/avcodec_parameters_to_context decoder-context codec-parameters)
         err (raw/avcodec_open2 decoder-context decoder nil)
@@ -328,7 +327,7 @@
                                            _ (when-let [flags (:flags encoder-info)]
                                                (when (not (zero? flags))
                                                  (doto encoder-context
-                                                   (.put :flags
+                                                   (Map/.put :flags
                                                          (int (bit-or (:flags encoder-context)
                                                                       (:flags encoder-info)))))))
                                            
@@ -434,9 +433,9 @@
                              :media-type/audio
                              (let [pts (+ (:last-pts state)
                                           (:nb_samples input-frame))
-                                   _ (.put input-frame :pts pts)
-                                   _ (.put (:time_base input-frame) :num 1)
-                                   _ (.put (:time_base input-frame) :den (:sample_rate input-frame))
+                                   _ (Map/.put input-frame :pts pts)
+                                   _ (Map/.put (:time_base input-frame) :num 1)
+                                   _ (Map/.put (:time_base input-frame) :den (:sample_rate input-frame))
                                    state (assoc state :last-pts pts)]
                                state)
                              
@@ -468,9 +467,9 @@
                                                  :media-type/audio (av/->avrational 1 (:sample-rate input-format))
                                                  :media-type/video (:time-base input-format))]
                                  (assert time-base)
-                                 (.put output-packet :time_base time-base))
+                                 (Map/.put output-packet :time_base time-base))
                                
-                               (.put output-packet :stream_index idx)
+                               (Map/.put output-packet :stream_index idx)
                                (async/>!! out-chan {:packet output-packet
                                                     :type :new-packet})
                                (recur nil))
@@ -515,9 +514,9 @@
                                                            :media-type/audio (av/->avrational 1 (:sample-rate input-format))
                                                            :media-type/video (:time-base input-format))]
                                            (assert time-base)
-                                           (.put output-packet :time_base time-base))
+                                           (Map/.put output-packet :time_base time-base))
 
-                                         (.put output-packet :stream_index idx)
+                                         (Map/.put output-packet :stream_index idx)
                                          (async/>!! out-chan {:type :new-packet
                                                                 :packet output-packet})
                                            (recur nil))
@@ -606,8 +605,8 @@
                          "map of stream-id -> encoder-info. keys can be :codec and :flags."}
                 :ins (into {} ins)
                 :outs {:packet "Decoded Frames"
-                       :recycle-frame "frame to recycle"}})
-   :init (fn [{:keys [fresh-packet-chan] :as state}]
+                       ::recycle-frame "frame to recycle"}})
+   :init (fn [{::keys [fresh-packet-chan] :as state}]
            (let [internal-in-chans (repeatedly (count ins) #(async/chan))
                  in->internal (into {}
                                     (map (fn [[id doc]]
@@ -669,8 +668,8 @@
                {:params {:fname "Name of file to write to."
                          :format "outputformat to use."}
                 :ins {:in "packets to write to file."}
-                :outs {:recycle-packet ""
-                       :done ""}})
+                :outs {::recycle-packet ""
+                       :status ""}})
    :init (fn [state]
            state)
    :transition (fn [state status]
@@ -715,7 +714,7 @@
          (raw/av_write_trailer format-context)
          (raw/avio_closep (dt-ffi/make-ptr :pointer (:pb format-context)))
          (raw/avformat_free_context format-context)
-         [state])
+         [state {:status [{:type :stream-closed}]}])
        
        :new-packet
        (let [format-context (:format-context state)
@@ -733,7 +732,7 @@
                                           :den (-> stream :time_base :den int)})
              ;; time base on packet doesn't currently do anything
              ;; but we update it here for consistency
-             _ (.put packet :time_base (:time_base stream))
+             _ (Map/.put packet :time_base (:time_base stream))
              
              
              err (raw/av_interleaved_write_frame format-context packet)
@@ -750,114 +749,142 @@
                          "Error writing file"
                          {:error-code err
                           :error-msg (av/error->str err)})))
-             outs {:recycle-packet [packet]}]
+             outs {::recycle-packet [packet]}]
          ;; (flush)
          [state outs])))})
 
 (defn packet-recycler []
   {:describe (fn []
                {:params {:n "Number of packets"
-                         :fresh-packet-chan "Channel to put fresh packets on"}
-                :ins {:recycle-packet "Packets to recycle"}
-                :outs {;;:fresh-packet "Fresh packets"
-                       }})
-   :init (fn [{:keys [n fresh-packet-chan] :as state}]
+                         ::fresh-packet-chan "Channel to put fresh packets on"}
+                :ins {::recycle-packet "Packets to recycle"}
+                :outs {}})
+   :init (fn [{:keys [n] ::keys [fresh-packet-chan] :as state}]
            (let [recycle-packet-internal (async/chan)
                  update-state-chan (async/chan (async/sliding-buffer 1))]
              (async/go
-              (try
-                (loop [fresh-packets (into (queue)
-                                           (repeatedly n #(raw/av_packet_alloc)))]
-                  (async/put! update-state-chan {:fresh-count (count fresh-packets)})
-                  ;; (prn "fresh packet count " (count fresh-packets))
-                  (let [ports [recycle-packet-internal]
-                        ports (if (seq fresh-packets)
-                                (conj ports [fresh-packet-chan
-                                             (peek fresh-packets)])
-                                ports)
-                        [val port] (async/alts! ports)]
-                    
-                    (cond
-                      (= port recycle-packet-internal) (when-let [packet val]
-                                                         (if (eof-data? packet)
-                                                           (recur fresh-packets)
-                                                           ;; else
-                                                           (do
-                                                             (raw/av_packet_unref packet)
-                                                             (recur (conj fresh-packets
-                                                                          packet)))))
-                      (= port fresh-packet-chan) (when val
-                                                   (recur (pop fresh-packets)))
+              (let [initial-packets (into (queue)
+                                          (repeatedly n #(raw/av_packet_alloc)))]
+                (doseq [packet initial-packets]
+                  (tech.v3.resource/track 
+                   packet
+                   {:dispose-fn
+                    (let [addr (-> packet dt-ffi/->pointer .address)]
+                      (fn []
+                        (raw/av_packet_free (dt-ffi/make-ptr :pointer addr))))}))
+                (try
+                  (loop [fresh-packets initial-packets]
+                    (async/put! update-state-chan {:fresh-count (count fresh-packets)})
+                    ;; (prn "fresh packet count " (count fresh-packets))
+                    (let [ports [recycle-packet-internal]
+                          ports (if (seq fresh-packets)
+                                  (conj ports [fresh-packet-chan
+                                               (peek fresh-packets)])
+                                  ports)
+                          [val port] (async/alts! ports)]
                       
-                      :else (throw (ex-info "Unrecognized chan" {})))))
-                (catch Exception e
-                  (prn e))
-                (finally
-                  (prn "qutting packet recycler"))))
+                      (cond
+                        (= port recycle-packet-internal) (when-let [packet val]
+                                                           (raw/av_packet_unref packet)
+                                                           (recur (conj fresh-packets
+                                                                        packet)))
+                        (= port fresh-packet-chan) (when val
+                                                     (recur (pop fresh-packets)))
+                        
+                        :else (throw (ex-info "Unrecognized chan" {})))))
+                  (catch Exception e
+                    (prn e))
+                  (finally
+                    ;; make sure fresh-packet-chan is closed
+                    ;; (loop []
+                    ;;   (when-let [_ (async/<! fresh-packet-chan)]
+                    ;;     (recur)))
+                    
+                    ;; no way to ensure that this is run after shutdown
+                    ;; so someone might still be using frames. 
+                    #_#_(let [packet* (dt-ffi/make-ptr :pointer 0)]
+                      (doseq [packet initial-packets]
+                        (dt/set-value! packet* 0 (-> packet dt-ffi/->pointer .address))
+                        (raw/av_packet_free packet*)))
+                    (prn "all packets freed")))))
              (assoc state
                     ::flow/out-ports {:internal/recycle-packet recycle-packet-internal}
                     ::flow/in-ports {:update-state update-state-chan})))
    :transition (fn [state status] 
                  (if (= status ::flow/stop)
                    (do
-                     #_(run! (fn [packet]
-                             (raw/av_packet_free 
-                              (dt-ffi/make-ptr :pointer packet)))
-                           (:fresh-packets state))
+                     (-> state ::flow/out-ports :internal/recycle-packet async/close!)
                      (assoc state :fresh-packets (queue)))
                    state))
    :transform
    (fn [state in msg]
      (case in
        :update-state [(merge state msg)]
-       :recycle-packet
+       ::recycle-packet
        [state {:internal/recycle-packet [msg]}]))})
 
 (defn frame-recycler []
   {:describe (fn []
                {:params {:n "Number of frames"
-                         :fresh-frame-chan "Channel to put fresh frames on."}
-                :ins {:recycle-frame "frames to recycle"}})
-   :init (fn [{:keys [n fresh-frame-chan] :as state}]
-           (let [recycle-frame-internal (async/chan 10)
+                         ::fresh-frame-chan "Channel to put fresh frames on."
+                         :recycle-frame "An external channel for recycling frames."}
+                :ins {::recycle-frame "frames to recycle"}})
+   :init (fn [{:keys [n] ::keys [fresh-frame-chan] :as state}]
+           (let [recycle-frame-internal (or 
+                                         (:recycle-frame state)
+                                         (async/chan 10))
                  update-state-chan (async/chan (async/sliding-buffer 1))]
              (async/go
-              (try
-                (loop [fresh-frames (into (queue)
-                                          (repeatedly n #(raw/av_frame_alloc)))]
-                  (async/put! update-state-chan {:fresh-count (count fresh-frames)})
-                  (let [ports [recycle-frame-internal]
-                        ports (if (seq fresh-frames)
-                                (conj ports [fresh-frame-chan (peek fresh-frames)])
-                                ports)
-                        [val port] (async/alts! ports)]
-                    (cond
-                      (= port recycle-frame-internal) (when-let [frame val]
-                                                        (if (eof-data? frame)
-                                                          (recur fresh-frames)
-                                                          (do
-                                                            (raw/av_frame_unref frame)
-                                                            (recur (conj fresh-frames
-                                                                         frame)))))
-                      (= port fresh-frame-chan) (when val
-                                                  (recur (pop fresh-frames)))
-                      
-                      :else (throw (ex-info "Unrecognized chan" {})))))
-                (catch Exception e
-                  (prn e))
-                (finally
-                  (prn "qutting frame recycler"))))
+              (let [initial-frames (into (queue)
+                                         (repeatedly n #(raw/av_frame_alloc)))]
+                (doseq [frame initial-frames]
+                  (tech.v3.resource/track 
+                   frame
+                   {:dispose-fn
+                    (let [addr (-> frame dt-ffi/->pointer .address)]
+                      (fn []
+                        (raw/av_frame_free (dt-ffi/make-ptr :pointer addr))))}))
+
+                (try
+                  (loop [fresh-frames initial-frames]
+                    (async/put! update-state-chan {:fresh-count (count fresh-frames)})
+                    (let [ports [recycle-frame-internal]
+                          ports (if (seq fresh-frames)
+                                  (conj ports [fresh-frame-chan (peek fresh-frames)])
+                                  ports)
+                          [val port] (async/alts! ports)]
+                      (cond
+                        (= port recycle-frame-internal) (when-let [frame val]
+                                                          (raw/av_frame_unref frame)
+                                                          (recur (conj fresh-frames
+                                                                           frame)))
+                        (= port fresh-frame-chan) (when val
+                                                    (recur (pop fresh-frames)))
+                        
+                        :else (throw (ex-info "Unrecognized chan" {})))))
+                  (catch Exception e
+                    (prn e))
+                  (finally
+                    ;; make sure fresh-frame-chan is closed
+                    ;; (loop []
+                    ;;   (when-let [_ (async/<! fresh-frame-chan)]
+                    ;;     (recur)))
+
+                    ;; no way to ensure that this is run after shutdown
+                    ;; so someone might still be using frames. 
+                    #_(let [frame* (dt-ffi/make-ptr :pointer 0)]
+                      (doseq [frame initial-frames]
+                        (dt/set-value! frame* 0 (-> frame dt-ffi/->pointer .address))
+                        (raw/av_frame_free frame*)))
+                    #_(prn "all frames freed")))))
              
              (assoc state
-                    ::flow/out-ports {;;:fresh-frame fresh-frame-chan
-                                      :internal/recycle-frame recycle-frame-internal}
+                    ::flow/out-ports {:internal/recycle-frame recycle-frame-internal}
                     ::flow/in-ports {:update-state update-state-chan})))
    :transition (fn [state status] 
                  (if (= status ::flow/stop)
                    (do
-                     #_(run! (fn [frame]
-                               (raw/av_frame_free (PointerByReference. (.getPointer frame))))
-                             (:fresh-frames state))
+                     (-> state ::flow/out-ports :internal/recycle-frame async/close!)
                      (assoc state :fresh-frames (queue)))
                    state))
    :transform
@@ -865,52 +892,35 @@
      (case in
        :update-state
        [(merge state msg)]
-       :recycle-frame
+       ::recycle-frame
        [state {:internal/recycle-frame [msg]}]))})
 
 (defn counter-proc []
-  (flow/map->step
-   {:describe (fn []
-                {:args {:prefix ""}
-                 :ins {:in ""}})
-    :init
-    (fn [state]
-      (assoc state :n 0))
-    :transform
-    (fn [{:keys [n prefix] :as state} in msg]
-      (prn prefix (:n state))
-      [(update state :n inc)])}))
+  {:describe (fn []
+               {:args {:prefix ""}
+                :ins {:in ""}})
+   :init
+   (fn [state]
+     (assoc state :n 0))
+   :transform
+   (fn [{:keys [n prefix] :as state} in msg]
+     (prn prefix (:n state))
+     [(update state :n inc)])})
 
 (defn onto-chan-proc []
-  (flow/map->step
-   {:describe (fn [] {:ins {:in "  "}
-                      :params {:chan "Channel to put values onto"}})
-    :init (fn [m]
-            (assoc m ::flow/out-ports {:out (:chan m)}))
-    :transform (fn [_ _ v]
-                 [_ {:out [v]}])}))
+  {:describe (fn [] {:ins {:in "  "}
+                     :params {:chan "Channel to put values onto"}})
+   :init (fn [m]
+           (assoc m ::flow/out-ports {:out (:chan m)}))
+   :transform (fn [_ _ v]
+                [_ {:out [v]}])})
 
-(defn stream-filter []
+
+(defn stream-index-filter []
   {:describe (fn []
                {:params {:stream-index "The stream index to filter for"}
                 :ins {:in ""}
-                :outs {:recycle-packet ""
-                       :out ""}})
-   :init (fn [m] m)
-   :transform
-   (fn [state in packet]
-     (if (or (= (:stream-index state) (:stream_index packet))
-             (eof-data? packet))
-       [state {:out [packet]}]
-       [state {:recycle-packet [packet]}]))})
-
-
-
-(defn stream-filter2 []
-  {:describe (fn []
-               {:params {:stream-index "The stream index to filter for"}
-                :ins {:in ""}
-                :outs {;; :recycle-packet ""
+                :outs {::recycle-packet ""
                        :out ""}})
    :init (fn [m] m)
    :transform
@@ -925,8 +935,9 @@
          :streams-closed
          [state {:out [{:type :stream-closed}]}]
          
-         :new-packet [state (when (= stream-index (-> msg :packet :stream_index))
-                              {:out [msg]})])))})
+         :new-packet [state (if (= stream-index (-> msg :packet :stream_index))
+                              {:out [msg]}
+                              {::recycle-packet [msg]})])))})
 
 
 (defn stream-splitter [n]
@@ -988,8 +999,6 @@
                         (let [codecpar (dt-ffi/ptr->struct :AVCodecParameters
                                                            codecpar)
                               codec-type (:codec_type codecpar)
-                              _ (tap> {:stream stream
-                                       :codec-type codec-type})
                               port (media.datafy/media-type->kw codec-type)]
                           [i port])))
                      (:streams msg))
@@ -1014,6 +1023,47 @@
                             port (get (:idx->port state) stream-index)]
                         (assert packet)
                         {port [msg]})])))})
+
+(defn stream-media-type-filter 
+  "Filters a stream for packet of a specific media type."
+  []
+  {:describe (fn []
+               {:ins {:in ""}                
+                :outs {:out ""
+                       ::recycle-packet ""}
+                :params {:media-type "The media type to filter for"}})
+   :init (fn [m] m)
+   :transform
+   (fn [state in msg]
+     (let [type (:type msg)
+           packet (:packet msg)
+           stream-index (:stream-index state)]
+       (case (:type msg)
+         :streams-opened
+         (let [media-type (:media-type state)
+               [filter-index outs] (first-by 
+                                      (comp (keep-indexed (fn [i {:keys [codecpar] :as stream}]
+                                                            (let [codecpar (dt-ffi/ptr->struct :AVCodecParameters
+                                                                                               codecpar)
+                                                                  codec-type (media.datafy/media-type->kw
+                                                                              (:codec_type codecpar))]
+                                                              (when (= codec-type media-type)
+                                                                [i 
+                                                                 {:out [{:type :stream-opened
+                                                                         :stream stream}]}])))))
+                                      (:streams msg))
+               state (assoc state :filter-index filter-index)]
+           [state outs])
+         :streams-closed
+         [(dissoc state :filter-index)
+          {:out [{:type :stream-closed}]}]
+         
+         :new-packet [state 
+                      (let [packet (:packet msg)
+                            stream-index (-> msg :packet :stream_index)]
+                        (if (= stream-index (:filter-index state))
+                          {:out [msg]}
+                          {::recycle-packet [packet]}))])))})
 
 
 
@@ -1047,18 +1097,20 @@
                                  (not (contains? banned cid))))))
 
 (defn wrap-file-packet-input-filter [[state outs]]
-  (let [state (if (> (count (:fresh-packets state)) 10)
-                (file-packet-flow-ban state :fresh-packet)
-                (file-packet-flow-unban state :fresh-packet))]
-    [state outs]))
+  (if (:eof? state)
+    [(assoc state ::flow-input-filter (constantly false)) outs]
+    (let [state (if (> (count (:fresh-packets state)) 10)
+                  (file-packet-flow-ban state :fresh-packet)
+                  (file-packet-flow-unban state :fresh-packet))]
+      [state outs])))
 
-(defn file->packets-flow []
+(defn file->packets-proc []
   (wrap-producer
    {:describe (fn []
                 {:ins {:filename "File to start decoding"}
-                 :params {:fresh-packet-chan "Channel to acquire fresh packets."}
+                 :params {::fresh-packet-chan "Channel to acquire fresh packets."}
                  :outs {:packet "Packets from file."}})
-    :init (fn [{:keys [fresh-packet-chan] :as state}]
+    :init (fn [{::keys [fresh-packet-chan] :as state}]
             (assoc state
                    :fresh-packets (queue)
                    ::flow/in-ports {:fresh-packet fresh-packet-chan}
@@ -1116,6 +1168,70 @@
                               :error-msg (av/error->str err)
                               :type :decode-error})))))))}))
 
+
+(defn file->packets-proc2 []
+  (wrap-producer
+   {:describe (fn []
+                {:ins {}
+                 :params {::fresh-packet-chan "Channel to acquire fresh packets."
+                          :filename "File to start decoding"}
+                 :outs {:packet "Packets from file."}})
+    :init (fn [{::keys [fresh-packet-chan] :as state}]
+            (assoc state
+                   :fresh-packets (queue)
+                   ::flow/in-ports {:fresh-packet fresh-packet-chan}
+                   ::produce false))
+    :transition (fn [state status] 
+                  (if (= status ::flow/stop)
+                    (file-packet-flow-close state)
+                    state))
+    :transform
+    (fn [state in msg]
+      (wrap-file-packet-input-filter
+       (case in
+         :fresh-packet
+         [(-> state
+              (update :fresh-packets conj msg)
+              (assoc ::produce true))]
+         
+         ;; else
+         (if-let [format-context (:format-context state)]
+           (let [packet (peek (:fresh-packets state))
+                 
+                 _ (assert (and format-context packet))
+
+                 state (update state :fresh-packets pop)
+                 state (if (seq (:fresh-packets state))
+                         state
+                         (assoc state ::produce false))
+                 
+                 err (raw/av_read_frame (:format-context state) packet)]
+             
+             (cond
+               (zero? err) [state {:packet [{:type :new-packet
+                                             :packet packet}]}]
+               (av/eof? err) 
+               (do
+                 (prn "sending packet eof!")
+                 [(-> state
+                      (assoc ::produce false)
+                      (file-packet-flow-close)
+                      (assoc :eof? true))
+                  {:packet [{:type :streams-closed}]}])
+               
+               :else
+               (throw (ex-info "Error reading file"
+                               {:error-code err
+                                :error-msg (av/error->str err)
+                                :type :decode-error}))))
+           ;; else init
+           (let [state (-> state
+                           (file-packet-flow-init-context (:filename state)))]
+             [state
+              {:packet 
+               [{:type :streams-opened
+                 :streams (-> state :format-context :streams)}]}])))))}))
+
 (defn packet-frames-init [state msg]
   (let [stream (:stream msg)]
     (assoc state :decoder-context (stream->decoder-context stream))))
@@ -1149,7 +1265,6 @@
            (:new-packet :stream-closed)
            (let [packet (:packet msg)
                  decoder-context (:decoder-context state)
-                 
                  err (raw/avcodec_send_packet decoder-context packet)
                  _ (when (and (not (zero? err))
                               (not= err -22)
@@ -1188,9 +1303,6 @@
                          ;; some other error
                          :else
                          (do
-                           (tap> {:bad {:error-code err
-                                        :error-msg (av/error->str err)
-                                        :type :decode-error}})
                            (throw (ex-info
                                    "Error decoding packet"
                                    {:error-code err
@@ -1214,12 +1326,11 @@
 (defn packet->frames []
   {:describe (fn []
                {
-                :params {:frame-buf-size "Number of fresh frames to buffer"
-                         :fresh-frame-chan "Channel to get fresh frames from."}
+                :params {::fresh-frame-chan "Channel to get fresh frames from."}
                 :ins {:packet "packet to decode"}
                 :outs {:frame "Decoded Frames"
-                       :recycle-packet "Packet to recycle"}})
-   :init (fn [{:keys [fresh-frame-chan frame-buf-size] :as state}]
+                       ::recycle-packet "Packet to recycle"}})
+   :init (fn [{::keys [fresh-frame-chan] :as state}]
            (let [internal-packet-chan (async/chan)
                  ready-for-packet-chan (async/chan 1)
                  internal-recycle-chan (async/chan 1)
@@ -1250,7 +1361,7 @@
                 {:internal/packet2 [msg]}]
        :internal/ready-for-packet [(dissoc state ::flow/input-filter)]
        :internal/recycle2 [state
-                           {:recycle-packet [msg]}]
+                           {::recycle-packet [msg]}]
        :internal/frame2 [state {:frame [msg]}]))})
 
 #_(defn undatafy-audio-format [{:keys [channel-layout
@@ -1273,6 +1384,7 @@
 (defn test-packet-flow []
   (let [fresh-frame-chan (async/chan 12)
         fresh-packet-chan (async/chan 12)
+        done-chan (async/chan (async/sliding-buffer 10))
         gdef {:procs
               {:packet-recycler
                {:proc (-> (packet-recycler)
@@ -1285,10 +1397,10 @@
                           flow/process)
                 :args {:n 1000}}
                
-               :media-packets {:proc (-> (file->packets-flow)
+               :media-packets {:proc (-> (file->packets-proc)
                                          flow/map->step
                                          flow/process)
-                               :args {:fresh-packet-chan fresh-packet-chan}}
+                               :args {::fresh-packet-chan fresh-packet-chan}}
                :packet-sink
                {:proc (flow/process
                        (flow/lift1->step
@@ -1303,6 +1415,11 @@
                                                 :stream_index (:stream_index packet)})
                                           packet)))))}
                
+               :report-done {:proc (-> (onto-chan-proc)
+                                       flow/map->step
+                                       flow/process)
+                             :args {:chan done-chan}}
+               
                
                :stream-splitter {:proc (-> (media-type-splitter)
                                            flow/map->step
@@ -1311,15 +1428,15 @@
                :decoder0 {:proc (-> (packet->frames)
                                     flow/map->step
                                     flow/process)
-                          :args {:fresh-frame-chan fresh-frame-chan}}
+                          :args {::fresh-frame-chan fresh-frame-chan}}
                :decoder1 {:proc (-> (packet->frames)
                                     flow/map->step
                                     flow/process)
-                          :args {:fresh-frame-chan fresh-frame-chan}}
+                          :args {::fresh-frame-chan fresh-frame-chan}}
                :resampler {:proc (-> (audio/resample-audio-proc)
                                      flow/map->step
                                      flow/process)
-                           :args {:fresh-frame-chan fresh-frame-chan
+                           :args {::fresh-frame-chan fresh-frame-chan
                                   :output-format {:ch-layout (media.datafy/str->ch-layout "stereo")
                                                   :sample-format (media.datafy/kw->sample-format :sample-format/fltp)
                                                   :sample-rate 44100
@@ -1338,7 +1455,7 @@
                                                   :sample-rate 44100
                                                   :media-type :media-type/audio}
                                   :filter-name my-filter-name
-                                  :fresh-frame-chan fresh-frame-chan}}
+                                  ::fresh-frame-chan fresh-frame-chan}}
                
                :my-video-filter {:proc (-> (avfilter/filter-proc [[:in "input"]])
                                            flow/map->step
@@ -1346,7 +1463,7 @@
                                  :args {:opts {}
                                         :output-format {:pixel-format (media.datafy/kw->pixel-format :pixel-format/yuv420p)}
                                         :filter-name "edgedetect"
-                                        :fresh-frame-chan fresh-frame-chan}}
+                                        ::fresh-frame-chan fresh-frame-chan}}
                
                :frame-encoder {:proc (-> (frame-encoder-proc [[:audio ""]
                                                               [:video ""]])
@@ -1357,7 +1474,7 @@
                                                  :video {:codec {:id 27}
                                                          :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}}
                                       
-                                      :fresh-packet-chan fresh-packet-chan}}
+                                      ::fresh-packet-chan fresh-packet-chan}}
                
                :file-writer {:proc (-> (write-file-proc)
                                        flow/map->step
@@ -1419,46 +1536,72 @@
                 [:file-writer :in]
                 ]
                
+               [[:file-writer :status] [:report-done :in]]
                
                
                
-               [[:packet-sink :out] [:packet-recycler :recycle-packet]]
+               [[:packet-sink :out] [:packet-recycler ::recycle-packet]]
                ;; [[:decoder1 :frame] [:frame-sink1 :in]]
-               [[:decoder0 :recycle-packet] [:packet-recycler :recycle-packet]]
+               [[:decoder0 ::recycle-packet] [:packet-recycler ::recycle-packet]]
                [[:play-sound :recycle-frame] [:frame-recycler :recycle-frame]]
                [[:resampler :recycle-frame] [:frame-recycler :recycle-frame]]
                [[:my-audio-filter :recycle-frame] [:frame-recycler :recycle-frame]]
                [[:my-video-filter :recycle-frame] [:frame-recycler :recycle-frame]]
                [[:frame-encoder :recycle-frame] [:frame-recycler :recycle-frame]]
-               [[:decoder1 :recycle-packet] [:packet-recycler :recycle-packet]]
-               [[:file-writer :recycle-packet] [:packet-recycler :recycle-packet]]
+               [[:decoder1 ::recycle-packet] [:packet-recycler ::recycle-packet]]
+               [[:file-writer ::recycle-packet] [:packet-recycler ::recycle-packet]]
                
                
                [[:frame-sink0 :out] [:frame-recycler :recycle-frame]]
                ;; [[:frame-sink1 :out] [:frame-recycler :recycle-frame]]
                ;; [[:media-packets :packet] [:packet-sink :in]]
-               ;; [[:packet-sink :out] [:packet-recycler :recycle-packet]]
+               ;; [[:packet-sink :out] [:packet-recycler ::recycle-packet]]
                ]}
         
 
-        gdef (assoc-in gdef [:procs :frame-recycler :args :fresh-frame-chan] fresh-frame-chan)
-        gdef (assoc-in gdef [:procs :packet-recycler :args :fresh-packet-chan] fresh-packet-chan)
+        gdef (assoc-in gdef [:procs :frame-recycler :args ::fresh-frame-chan] fresh-frame-chan)
+        gdef (assoc-in gdef [:procs :packet-recycler :args ::fresh-packet-chan] fresh-packet-chan)
 
         ]
     gdef))
 
 (defn test-packet-flow! []
-  (let [gdef (test-packet-flow)
-        flow (flow/create-flow gdef)]
+  (let [
+        gdef (test-packet-flow)
+        done-chan (-> gdef
+                      :procs
+                      :report-done
+                      :args
+                      :chan)
+        
+        fresh-frame-chan (-> gdef
+                             :procs
+                             :frame-recycler
+                             :args
+                             ::fresh-frame-chan)
+        fresh-packet-chan (-> gdef
+                              :procs
+                              :packet-recycler
+                              :args
+                              ::fresh-packet-chan)
+
+        flow (flow/create-flow gdef)
+        ]
     (-> flow flow/start monitoring)
   (flow/resume flow)
   
     (flow/inject flow [:media-packets :filename] [media-fname])
-    ;; (flow/inject flow [:media-packets :filename] [media-fname])
+    (async/<!! done-chan)
+    (prn "stopping flow.")
+    (flow/stop flow)
+    ;; close these chans after stopping flow
+    ;; (async/close! fresh-frame-chan)
+    
+    (^[long] Thread/sleep (long 2e3))
+    (System/gc)
+
   
-  (^[long] Thread/sleep (long 30000e3)))
-  
-  )
+    (^[long] Thread/sleep (long 15e3))))
 
 (defn -main []
   
@@ -1474,12 +1617,211 @@
   media-fname
   "/Users/adrian/workspace/eddie/al_super-mario-world-map2.mp3"
   
-  ;; need to figure the right way to set pts
-  ;; copying code from `filter.media` sets audio-pts, but not for video?
-  ;; but for video, the pts is rescaled.
-  ;; maybe we just need to do a better job of settings time_base on packets/frames?
-  ;; and rescaling as appropriate.
 
- 
+  
   ,)
+
+
+(defn add-recycler 
+  ([g recycler-proc recycle-pid recycle-port fresh-param fresh-chan n]
+   (let [recycle-conns
+         (into []
+               (keep (fn [[pid {:keys [proc]}]]
+                       (let [m (flow.spi/describe proc)]
+                         (when (-> m :outs recycle-port)
+                           [[pid recycle-port] [recycle-pid recycle-port]]))))
+               (:procs g))
+         
+         fresh-pids
+         (into #{}
+               (keep (fn [[pid {:keys [proc]}]]
+                       (let [m (flow.spi/describe proc)]
+                         (when (-> m :params fresh-param)
+                           pid))))
+               (:procs g))
+         
+         
+         
+         g (update g :conns into recycle-conns)
+         g (update g :procs
+                   (fn [procs]
+                     (reduce (fn [procs pid]
+                               (assoc-in procs [pid :args fresh-param] fresh-chan))
+                             procs
+                             fresh-pids)))
+         
+         g (assoc-in g
+                     [:procs recycle-pid]
+                     {:proc recycler-proc
+                      :args {:n n
+                             fresh-param fresh-chan}})]
+     g)))
+
+(defn add-frame-recycler 
+  ([g]
+   (add-frame-recycler g (async/chan 12) 100))
+  ([g fresh-frame-chan n]
+   (add-recycler g 
+                 (-> (frame-recycler)
+                       flow/map->step
+                       flow/process)
+                 ::frame-recycler
+                 ::recycle-frame
+                 ::fresh-frame-chan
+                 fresh-frame-chan
+                 n)))
+
+(defn add-packet-recycler
+  ([g]
+   (add-packet-recycler g (async/chan 12) 100))
+  ([g fresh-packet-chan n]
+   (add-recycler g 
+                 (-> (packet-recycler)
+                     flow/map->step
+                     flow/process)
+                 ::packet-recycler
+                 ::recycle-packet
+                 ::fresh-packet-chan
+                 fresh-packet-chan
+                 n)))
+
+
+(defn frames-flow
+  "Creates a flow for receiving frames from a a media source.
+  
+  A channel for receiving frames must be assoc-in to [:procs :frame-out :args :chan].
+  A channel for recycling frames must be assoc-in to [:procs ::frame-recycler :args :recycle-frame].
+
+  "
+  [media stream]
+  ;; assume media is a file?
+  (let [file (io/file (:file media))
+
+        stream-filter (case stream
+                        :audio {:proc (-> (stream-media-type-filter)
+                                          flow/map->step
+                                          flow/process)
+                                :args {:media-type :media-type/audio}}
+                        :video {:proc (-> (stream-media-type-filter)
+                                          flow/map->step
+                                          flow/process)
+                                :args {:media-type :media-type/video}}
+                        
+                        
+                        ;; else
+                        (do
+                          (when (not (integer? stream))
+                            (throw (ex-info "stream specifier must be :audio, :video or a stream index"
+                                            {:stream stream
+                                             :media media})))
+                          {:proc (-> (stream-index-filter)
+                                     flow/map->step
+                                     flow/process)
+                           :args {:stream-index stream}}))
+        
+        g {:procs {:media-packets {:proc (-> (file->packets-proc2)
+                                             flow/map->step
+                                             flow/process)
+                                   :args {:filename (java.io.File/.getPath file)}}
+                   :stream-filter stream-filter
+                   :decoder {:proc (-> (packet->frames)
+                                       flow/map->step
+                                       flow/process)}
+                   
+                   :transcode {:proc (-> (avfilter/filter-proc [[:in "input"]])
+                                         flow/map->step
+                                         flow/process)
+                               :args {:opts {}
+                                      :output-format {:pixel-format (media.datafy/kw->pixel-format :pixel-format/bgra)}
+                                      :filter-name "null"}}
+                   
+                   :frame-out {:proc (flow/process
+                                      (flow/map->step
+                                       {:describe (fn [] {:ins {:in "  "}
+                                                          :params {:chan "Channel to put values onto"}})
+                                        :init (fn [m] 
+                                                (assoc m
+                                                       ::flow/out-ports {:out (:chan m)}))
+                                        :transform (fn [state _ msg]
+                                                     (case (:type msg)
+                                                       :stream-opened [state]
+                                                       :stream-closed
+                                                       (do
+                                                         (async/close! (:chan state))
+                                                         [state])
+                                                       :new-frame
+                                                       [state {:out [(:frame msg)]}]))}))}}
+           :conns [
+                   [[:media-packets :packet] [:stream-filter :in]]
+                   [[:stream-filter :out] [:decoder :packet]]
+                   [[:decoder :frame] [:transcode :in]]
+                   [[:transcode :out] [:frame-out :in]]
+                   
+                   ;; [[:decoder ::recycle-packet] [:packet-recycler ::recycle-packet]]
+                   ;; [[:transcode :recycle-frame] [:frame-recycler :recycle-frame]]
+                   ;; [[:stream-filter ::recycle-packet] [:packet-recycler ::recycle-packet]]
+                   ]}]
+    g))
+
+
+(defn frames-reducible [media stream]
+  (reify clojure.lang.IReduceInit
+    (reduce [_ f init]
+      (let [g (frames-flow media stream)
+            frame-chan (async/chan 12)
+            recycle-frame-chan (async/chan 10)
+            
+            g (-> g
+                  (add-frame-recycler)
+                  (add-packet-recycler)
+                  (assoc-in [:procs :frame-out :args :chan] frame-chan)
+                  (assoc-in [:procs ::frame-recycler :args :recycle-frame] recycle-frame-chan))
+            
+            flow (flow/create-flow g)
+            _ (-> flow flow/start monitoring)
+            
+            
+            ]
+        (track-flow flow)
+        (flow/resume flow)
+        
+        (let [result (loop [result init]
+                       (if-let [frame (async/<!! frame-chan)]
+                         (let [result (f result frame)]
+                           (async/put! recycle-frame-chan frame)
+                           (if (reduced? result)
+                             @result
+                             (recur result)))
+                         result))]
+          (flow/stop flow)
+          result)))))
+
+(require 'membrane.skia)
+(def pixmap #'membrane.skia/pixmap)
+
+(defn -main [& args]
+  (let [uuid (random-uuid)
+        next-int (let [atm (atom 0)]
+                   (fn []
+                     (swap! atm inc)))
+        width 640
+        height 360]
+    (run! (fn [frame]
+            (prn (:pts frame))
+            
+            (let [linesize (-> frame :linesize first)
+                  buf-size (* linesize height)
+                  i (next-int)]
+              (membrane.skia/save-image
+               (str "frames/frame" i ".png")
+               (pixmap [uuid i]
+                       (dt/->byte-array
+                        (native-buffer/wrap-address (first (:data frame))
+                                                    buf-size))
+                       width height membrane.skia/kBGRA_8888_SkColorType membrane.skia/kOpaque_SkAlphaType 
+                       linesize))))
+          (frames-reducible {:file media-fname} :video)))
+  (prn "done")
+  (Thread/sleep (long 5e3)))
+
 

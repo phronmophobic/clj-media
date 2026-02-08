@@ -30,7 +30,8 @@
                      str->symbol
                      insert-last]]
             [com.phronemophobic.clj-media.impl.raw :as raw
-             :refer :all])
+             :refer :all]
+            [com.phronemophobic.clj-media.impl.flow :as-alias impl.flow])
   (:import java.io.PushbackReader
            java.lang.ref.Cleaner))
 
@@ -682,12 +683,14 @@
   {:describe (fn []
                {:params {:filter-name "Name of the avfilter"
                          :filter-options "Options to pass to the filter" 
-                         :fresh-frame-chan "Channel to get fresh frames from."
+                         ::impl.flow/fresh-frame-chan "Channel to get fresh frames from."
                          :output-format "optional output-format"}
                 :ins (into {} ins)
                 :outs {:out "filtered frames"
-                       :recycle-frame "Frames to recycle"}})
-   :init (fn [{:keys [filter-name opts fresh-frame-chan] :as state}]
+                       ::impl.flow/recycle-frame "Frames to recycle"}})
+   :init (fn [{:keys [filter-name opts]
+               ::impl.flow/keys [fresh-frame-chan]
+               :as state}]
            (let [internal-in-chans (repeatedly (count ins) #(async/chan))
                  in->internal (into {}
                                     (map (fn [[id doc]]
@@ -733,7 +736,7 @@
         
         :internal/ready-for-frame [(assoc state :ready? true)]
         :internal/recycle [state
-                           {:recycle-frame [msg]}]
+                           {::impl.flow/recycle-frame [msg]}]
         :internal/output-frame [state {:out [msg]}]
         
         ;; else
