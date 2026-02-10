@@ -54,6 +54,11 @@
 ;; - try to add back pressure by synchronizing on pts when writing to file
 ;; - make sure context vs ctx is used consistently
 ;; - update impl.raw so that functions that pass strings don't need dt-ffi/string->c
+;; - we pass the AVStream from file->packets in :streams-opened. For short
+;;   streams, the stream can be closed before the encoder gets a chance to copy the 
+;;   relevant info! We should copy the codec parameters, time base, etc and pass that
+;;   instead of the mutable AVStream.
+;; - rescale ts when trimming
 
 ;; - need to figure the right way to set pts
 ;; copying code from `filter.media` sets audio-pts, but not for video?
