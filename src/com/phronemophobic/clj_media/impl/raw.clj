@@ -23,6 +23,7 @@
 (def AVFMT_GLOBALHEADER  0x0040)
 (def AV_CODEC_FLAG_GLOBAL_HEADER (bit-shift-left 1 22))
 (def AV_CODEC_CAP_VARIABLE_FRAME_SIZE (int (bit-shift-left 1 16)) )
+(def AV_TIME_BASE 1/1000000)
 
 (def FF_COMPLIANCE_VERY_STRICT   2) ;; ///< Strictly conform to an older more strict version of the spec or reference software.
 (def FF_COMPLIANCE_STRICT        1) ;; ///< Strictly conform to all the things in the spec no matter what consequences.
