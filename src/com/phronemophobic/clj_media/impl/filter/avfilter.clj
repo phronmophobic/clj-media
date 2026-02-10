@@ -562,6 +562,7 @@
                  
                  ;; write frame
                  (av_buffersrc_write_frame buffer-context input-frame)
+                 (async/put! recycle-frame-chan input-frame)
                  
                  ;; try to get next frame
                  (let [output-frame 
@@ -587,7 +588,6 @@
                                               :opts opts
                                               :error-code err
                                               :error-msg (av/error->str err)})))))]
-                   (async/put! recycle-frame-chan input-frame)
                    (recur state output-frame)))
                
                :stream-closed
