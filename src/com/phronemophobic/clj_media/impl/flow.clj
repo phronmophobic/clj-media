@@ -921,6 +921,39 @@
                 [_ {:out [v]}])})
 
 
+(defn concat-frames-proc
+  "`ins` should be a vector [port, docstring]. All inputs should share the same format."
+  [ins]
+  {:describe (fn []
+               {:params {}
+                :ins (into {} ins)
+                :outs {:out ""}})
+   :init (fn [m] 
+           (assoc m
+                  ::flow/input-filter #{(-> ins first first)}
+                  :next-ins (into [] (map first) (next ins))))
+   
+   :transform
+   (fn [state in msg]
+     (case (:type msg)
+       :stream-opened
+       [state
+        (when (= in (-> ins first first))
+          {:out [msg]})]
+       
+       :stream-closed
+       (let [{:keys [next-ins]} state]
+         (if-let [next-in (first next-ins)]
+           [(assoc state
+                   ::flow/input-filter #{next-in}
+                   :next-ins (next next-ins))]
+           ;; else, we're done
+           [(assoc state ::flow/input-filter (constantly false))
+            {:out [{:type :stream-closed}]}]))
+       
+       ;; todo update pts?
+       :new-frame [state {:out [msg]}]))})
+
 (defn stream-index-filter []
   {:describe (fn []
                {:params {:stream-index "The stream index to filter for"}
