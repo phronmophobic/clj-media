@@ -54,7 +54,7 @@
 ;; - try to add back pressure by synchronizing on pts when writing to file
 ;; - make sure context vs ctx is used consistently
 ;; - update impl.raw so that functions that pass strings don't need dt-ffi/string->c
-;; - we pass the AVStream from file->packets in :streams-opened. For short
+;; - we pass the AVStream from file->packets in :stream-opened. For short
 ;;   streams, the stream can be closed before the encoder gets a chance to copy the 
 ;;   relevant info! We should copy the codec parameters, time base, etc and pass that
 ;;   instead of the mutable AVStream.
@@ -682,13 +682,16 @@
        :stream-opened
        (let [format-context (open-output-context (:fname state)
                                                  (:format state))
-             codec-parameters (:codec-parameters msg)
-             
              streams (into []
-                           (map (fn [{:keys [codec-parameters]}]
+                           (map (fn [{:keys [codec-parameters codecpar] :as m}]
                                   (let [stream (raw/avformat_new_stream format-context
                                                                         nil)
                                         _ (when (nil? stream)
+                                            (throw (Exception. "Could not create stream.")))
+                                        
+                                        ;; todo make this more consistent
+                                        codec-parameters (or codec-parameters codecpar)
+                                        _ (when (nil? codec-parameters)
                                             (throw (Exception. "Could not create stream.")))
                                         err (raw/avcodec_parameters_copy (:codecpar stream)
                                                                          codec-parameters)
@@ -724,7 +727,6 @@
              
              
              stream (nth (:streams state) (:stream_index packet))
-             
              _ (raw/av_packet_rescale_ts packet
                                          (:time_base packet )
                                          (:time_base stream)
@@ -964,10 +966,10 @@
            packet (:packet msg)
            stream-index (:stream-index state)]
        (case (:type msg)
-         :streams-opened
+         :stream-opened
          [state {:out [{:type :stream-opened
                         :stream (nth (:streams msg) stream-index)}]}]
-         :streams-closed
+         :stream-closed
          [state {:out [{:type :stream-closed}]}]
          
          :new-packet [state (if (= stream-index (-> msg :packet :stream_index))
@@ -975,48 +977,11 @@
                               {::recycle-packet [msg]})])))})
 
 
-(defn stream-splitter [n]
-  {:describe (fn []
-               {:ins {:in ""}
-                :outs (into {}
-                            (map (fn [i]
-                                   [(keyword (str "out" i)) ""]))
-                            (range n))})
-   :init (fn [m] m)
-   :transform
-   (fn [state in msg]
-     (let [type (:type msg)
-           packet (:packet msg)
-           stream-index (:stream-index state)]
-       (case (:type msg)
-         :streams-opened
-         [state 
-          (into {}
-                (map (fn [i]
-                       (let [port (keyword (str "out" i))]
-                         [port [{:type :stream-opened
-                                 :stream (nth (:streams msg) i)}]])))
-                (range n))]
-         :streams-closed
-         [state
-          (into {}
-                (map (fn [i]
-                       (let [port (keyword (str "out" i))]
-                         [port [{:type :stream-closed}]])))
-                (range n))]
-         
-         :new-packet [state 
-                      (let [packet (:packet msg)
-                            stream-index (-> msg :packet :stream_index)
-                            port (keyword (str "out" stream-index))]
-                        (assert packet)
-                        {port [msg]})])))})
-
 (defn media-type-splitter 
   "Splits packets by media type. Assumes at most one stream per media type."
   []
   {:describe (fn []
-               {:ins {:in ""}                
+               {:ins {:in "packets"}
                 :outs {:media-type/audio ""
                        :media-type/video ""}})
    :init (fn [m] m)
@@ -1026,7 +991,7 @@
            packet (:packet msg)
            stream-index (:stream-index state)]
        (case (:type msg)
-         :streams-opened
+         :stream-opened
          (let [idx->port
                (into {}
                      (map-indexed
@@ -1045,7 +1010,7 @@
                           idx->port)
                state (assoc state :idx->port idx->port)]
            [state outs])
-         :streams-closed
+         :stream-closed
          [(dissoc state :idx->port)
           (into {}
                 (map (fn [[i port]]
@@ -1058,6 +1023,51 @@
                             port (get (:idx->port state) stream-index)]
                         (assert packet)
                         {port [msg]})])))})
+
+(defn outnkw
+  "Returns :out<n> for given `n`."
+  [n]
+  (keyword (str "out" n)))
+
+
+(defn packet-index-splitter
+  "Splits packets by stream_index. output streams will be :out0...:out<n>. Recycles all packets with stream-index > `n`."
+  [n]
+  
+  {:describe (fn []
+               {:ins {:in "packets"}
+                :outs (into {::recycle-packet ""}
+                            (map (fn [i]
+                                   [(outnkw i) (str "stream index " i)]))
+                            (range n))})
+   :init (fn [m] m)
+   :transform
+   (fn [state in msg]
+     (let [type (:type msg)
+           packet (:packet msg)
+           stream-index (:stream-index state)]
+       (case (:type msg)
+         :stream-opened
+         (let [outs (into {}
+                          (map-indexed (fn [i stream]
+                                         {(outnkw i) [{:type :stream-opened
+                                                       :stream stream}]}))
+                          (:streams msg))]
+           [state outs])
+         :stream-closed
+         [
+          (into {}
+                (map (fn [i]
+                       {(outnkw i) [{:type :stream-closed}]}))
+                (range n))]
+         
+         :new-packet [state 
+                      (let [packet (:packet msg)
+                            stream-index (-> packet :stream_index)]
+                        (if (< stream-index n)
+                          (let [port (outnkw stream-index)]
+                            {port [msg]})
+                          {::recycle-packet [packet]}))])))})
 
 (defn stream-media-type-filter 
   "Filters a stream for packet of a specific media type."
@@ -1074,7 +1084,7 @@
            packet (:packet msg)
            stream-index (:stream-index state)]
        (case (:type msg)
-         :streams-opened
+         :stream-opened
          (let [media-type (:media-type state)
                [filter-index outs] (first-by 
                                       (comp (keep-indexed (fn [i {:keys [codecpar] :as stream}]
@@ -1089,7 +1099,7 @@
                                       (:streams msg))
                state (assoc state :filter-index filter-index)]
            [state outs])
-         :streams-closed
+         :stream-closed
          [(dissoc state :filter-index)
           {:out [{:type :stream-closed}]}]
          
@@ -1177,7 +1187,7 @@
                          (assoc ::produce (boolean (seq (:fresh-packets state)))))]
            [state
             {:packet 
-             [{:type :streams-opened
+             [{:type :stream-opened
                :streams (-> state :format-context :streams)}]}])
          
          :fresh-packet
@@ -1206,7 +1216,7 @@
                     (assoc ::produce false)
                     (file-packet-flow-close)
                     (file-packet-flow-unban :filename))
-                {:packet [{:type :streams-closed}]}])
+                {:packet [{:type :stream-closed}]}])
              
              :else
              (throw (ex-info "Error reading file"
@@ -1261,8 +1271,12 @@
                  err (raw/av_read_frame (:format-context state) packet)]
              
              (cond
-               (zero? err) [state {:packet [{:type :new-packet
-                                             :packet packet}]}]
+               (zero? err) (let [idx->time_base (:idx->time_base state)
+                                 tb (idx->time_base (:stream_index packet))]
+                             (assert tb)
+                             (Map/.put packet :time_base tb)
+                             [state {:packet [{:type :new-packet
+                                               :packet packet}]}])
                (av/eof? err) 
                (do
                  (prn "sending packet eof!")
@@ -1270,7 +1284,7 @@
                       (assoc ::produce false)
                       (file-packet-flow-close)
                       (assoc :eof? true))
-                  {:packet [{:type :streams-closed}]}])
+                  {:packet [{:type :stream-closed}]}])
                
                :else
                (throw (ex-info "Error reading file"
@@ -1279,11 +1293,17 @@
                                 :type :decode-error}))))
            ;; else init
            (let [state (-> state
-                           (file-packet-flow-init-context (:filename state)))]
+                           (file-packet-flow-init-context (:filename state)))
+                 streams (-> state :format-context :streams)
+                 idx->time_base (into {}
+                                      (map-indexed (fn [i stream]
+                                                     [i (:time_base stream)]))
+                                      streams)
+                 state (assoc state :idx->time_base idx->time_base)]
              [state
               {:packet 
-               [{:type :streams-opened
-                 :streams (-> state :format-context :streams)}]}])))))}))
+               [{:type :stream-opened
+                 :streams streams}]}])))))}))
 
 (defn packet-frames-init [state msg]
   (let [stream (:stream msg)]
@@ -1798,13 +1818,13 @@
         pid (gen-pid filter-name)
         
         conns (into []
-                    (map-indexed (fn [i {:keys [out-coord]}]
-                                   [out-coord [pid (keyword (str "in" i))]]))
+                    (map-indexed (fn [i g]
+                                   [(-> g :outs :out) [pid (keyword (str "in" i))]]))
                     input-flows)
         g (merge-flows g
                        {:procs {pid proc}
                         :conns conns
-                        :out-coord [pid :out]})]
+                        :outs {:out [pid :out]}})]
     g))
 
 (defmethod ->frame-flow :concat [media]
@@ -1827,29 +1847,45 @@
         pid (gen-pid "concat")
         
         conns (into []
-                    (map-indexed (fn [i {:keys [out-coord]}]
-                                   [out-coord [pid (keyword (str "in" i))]]))
+                    (map-indexed (fn [i g]
+                                   [(-> g :outs :out) [pid (keyword (str "in" i))]]))
                     input-flows)
         g (merge-flows g
                        {:procs {pid proc}
                         :conns conns
-                        :out-coord [pid :out]})]
+                        :outs {:out [pid :out]}})]
     g))
 
 
 
-
-(defn frames-flow
-  "Creates a flow for receiving frames from a a media source.
-  
-  A channel for receiving frames must be assoc-in to [:procs :frame-out :args :chan].
-  A channel for recycling frames must be assoc-in to [:procs ::frame-recycler :args :recycle-frame].
-
-  "
+(defn file-packet-flow
+  "Packets will be sent out of [:outs :out]"
   [media]
-  ;; assume media is a file?
   (let [file (io/file (:file media))
+        
+        media-packets-pid (gen-pid "media-packets")
+        g {:procs {media-packets-pid {:proc (-> (file->packets-proc2)
+                                                flow/map->step
+                                                flow/process)
+                                      :args
+                                      (merge
+                                       {:filename (java.io.File/.getPath file)}
+                                       (when-let [start-timestamp (:start-timestamp media)]
+                                         {:start-timestamp start-timestamp}))}}
+           :outs {:out [media-packets-pid :packet]}}]
+    g))
 
+(defn file-frame-flow
+  "Creates a flow for receiving frames from a a media source. 
+  
+  The coordinate of the input to receive packets will be in [:ins :in]
+  The coordinate of the frames will be at the keypath to `[:outs :out]"
+  [{:keys [stream] :as media}
+   
+   ]
+  ;; assume media is a file
+  (let [
+        
         stream (or (get media :stream)
                    0)
         stream-filter (case (:stream media)
@@ -1874,41 +1910,38 @@
                                      flow/process)
                            :args {:stream-index stream}}))
         
-        media-packets-pid (gen-pid "media-packets")
         stream-filter-pid (gen-pid "stream-filter")
         decoder-pid (gen-pid "decoder")
-        g {:procs {media-packets-pid {:proc (-> (file->packets-proc2)
-                                                flow/map->step
-                                                flow/process)
-                                      :args
-                                      (merge
-                                       {:filename (java.io.File/.getPath file)}
-                                       (when-let [start-timestamp (:start-timestamp media)]
-                                         {:start-timestamp start-timestamp})
-                                       (when-let [end-timestamp (:end-timestamp media)]
-                                         {:end-timestamp end-timestamp}))}
-                   stream-filter-pid stream-filter
+        g {:procs {stream-filter-pid stream-filter
                    decoder-pid {:proc (-> (packet->frames)
                                        flow/map->step
                                        flow/process)}}
            :conns [
-                   [[media-packets-pid :packet] [stream-filter-pid :in]]
                    [[stream-filter-pid :out] [decoder-pid :packet]]]
-           :out-coord [decoder-pid :frame]}]
+           :ins {:in [stream-filter-pid :in]}
+           :outs {:out [decoder-pid :frame]}}]
     g))
 
 (defmethod ->frame-flow :file [media]
-  (frames-flow media))
+  (let [packet-flow (file-packet-flow media)
+        frame-flow (file-frame-flow media)
+        g (merge-flows packet-flow
+                       frame-flow
+                       {:conns [[(-> packet-flow :outs :out)
+                                 (-> frame-flow :ins :in)]]})]
+    g))
 
 (comment
   (->frame-flow
    {:type :avfilter
     :filter-name "gblur"
     :inputs [{:file media-fname
-              :type :file}]}
-   :video 
-   {:media-type :media-type/video
-    :pixel-format :pixel-format/bgra})
+              :type :file}]})
+  
+  (->frame-flow
+   {:file media-fname
+    :stream 0
+    :type :file})
   
   ,)
 
@@ -1928,7 +1961,7 @@
                                                       (tap> [state msg])
                                                       [state])}))
                                 :args {:chan frame-chan}}}
-            :conns [[(:out-coord g) [:frame-out :in]]]})
+            :conns [[(-> g :outs :out) [:frame-out :in]]]})
         
         g (-> g
               (add-frame-recycler)
@@ -1963,7 +1996,7 @@
                                                             :new-frame
                                                             [state {:out [(:frame msg)]}]))}))
                                     :args {:chan frame-chan}}}
-                :conns [[(:out-coord g) [:frame-out :in]]]})
+                :conns [[(-> g :outs :out) [:frame-out :in]]]})
 
             g (-> g
                   (add-frame-recycler)
