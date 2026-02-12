@@ -729,11 +729,7 @@
              stream (nth (:streams state) (:stream_index packet))
              _ (raw/av_packet_rescale_ts packet
                                          (:time_base packet )
-                                         (:time_base stream)
-                                         #_#_{:num (-> packet :time_base :num int)
-                                              :den (-> packet :time_base :den int)}
-                                         {:num (-> stream :time_base :num int)
-                                          :den (-> stream :time_base :den int)})
+                                         (:time_base stream))
              ;; time base on packet doesn't currently do anything
              ;; but we update it here for consistency
              _ (Map/.put packet :time_base (:time_base stream))
@@ -1024,21 +1020,28 @@
                         (assert packet)
                         {port [msg]})])))})
 
-(defn outnkw
+(defn outkw
   "Returns :out<n> for given `n`."
   [n]
   (keyword (str "out" n)))
 
+(defn inkw
+  "Returns :in<n> for given `n`."
+  [n]
+  (keyword (str "in" n)))
+
 
 (defn packet-index-splitter
-  "Splits packets by stream_index. output streams will be :out0...:out<n>. Recycles all packets with stream-index > `n`."
+  "Splits packets by stream_index. output streams will be :out0...:out<n>. Recycles all packets with stream-index > `n`.
+  
+  The stream_index for all packets will be set to zero."
   [n]
   
   {:describe (fn []
                {:ins {:in "packets"}
                 :outs (into {::recycle-packet ""}
                             (map (fn [i]
-                                   [(outnkw i) (str "stream index " i)]))
+                                   [(outkw i) (str "stream index " i)]))
                             (range n))})
    :init (fn [m] m)
    :transform
@@ -1050,23 +1053,25 @@
          :stream-opened
          (let [outs (into {}
                           (map-indexed (fn [i stream]
-                                         {(outnkw i) [{:type :stream-opened
-                                                       :stream stream}]}))
+                                         {(outkw i) [{:type :stream-opened
+                                                      :streams [stream]}]}))
                           (:streams msg))]
            [state outs])
          :stream-closed
-         [
+         [state
           (into {}
                 (map (fn [i]
-                       {(outnkw i) [{:type :stream-closed}]}))
+                       {(outkw i) [{:type :stream-closed}]}))
                 (range n))]
          
          :new-packet [state 
                       (let [packet (:packet msg)
                             stream-index (-> packet :stream_index)]
                         (if (< stream-index n)
-                          (let [port (outnkw stream-index)]
-                            {port [msg]})
+                          (let [port (outkw stream-index)]
+                            {port [{:type :new-packet
+                                    :packet (doto packet
+                                              (Map/.put :stream_index 0))}]})
                           {::recycle-packet [packet]}))])))})
 
 (defn stream-media-type-filter 
@@ -2124,4 +2129,181 @@
                         :stream :video
                         :type :file}]}]})
   ,)
+
+(do
+  (ns-unmap *ns* '->file-flow)
+  (defmulti ->file-flow :type))
+
+#_#_(defmulti available-streams :type)
+(defmethod available-streams :file [media]
+  (let [{:keys [streams]} (av/probe (:file media))]
+    (into []
+          (map (fn [format]
+                 {:format format
+                  :container-types #{:frame :packet}}))
+          streams)))
+
+(defmethod ->file-flow :file [media]
+  (let [;; setup flow parts to read file.
+        
+        {:keys [streams]} (av/probe media-fname)
+        packet-flow (file-packet-flow media)
+        
+        packet-splitter-pid (gen-pid "packet-splitter")
+
+        g {:procs {packet-splitter-pid {:proc (-> (packet-index-splitter (count streams))
+                                                  flow/map->step
+                                                  flow/process)}}
+           :conns [[(-> packet-flow :outs :out)
+                    [packet-splitter-pid :in]]]
+           
+           :outs (into {}
+                       (map-indexed (fn [i stream]
+                                      [stream [packet-splitter-pid (outkw i)]]))
+                       streams)}
+        g (merge-flows packet-flow
+                       g)]
+    g))
+
+(def avfilter-media-type 
+   "A map of filter-name -> media-type "
+  (into {}
+        (comp 
+         (filter (fn [{:keys [outputs]}]
+                   (= 1 (count outputs))))
+         (map (fn [{:keys [name outputs]}]
+                [name (:media-type (first outputs))])))
+        (media.datafy/list-filters)))
+
+(defn merge-packets-proc
+  "Merge packets from n inputs into a single :out. The :stream_index of packets will be set to their corresponding :ins index."
+  [n]
+  
+  (let [port->idx (into {}
+                        (map (fn [i]
+                               [(inkw i) i]))
+                        (range n))]
+    {:describe (fn []
+                 {:ins (into {}
+                             (map (fn [i]
+                                    [(inkw i) (str "packet input " i)]))
+                             (range n))
+                  :outs {:out "merged packet stream"}})
+     :init (fn [m]
+             (assoc m :closed #{}))
+     :transform
+     (fn [state in msg]
+       (case (:type msg)
+         
+         :stream-opened
+         (let [state (update state :opened assoc in msg)]
+           (if (= (count (:opened state))
+                  n)
+             (let [opened (:opened state)
+                   out-msg {:type :stream-opened
+                            :streams (into []
+                                           (map (fn [i]
+                                                  (-> (get opened (inkw i))
+                                                      :streams
+                                                      (nth 0))))
+                                           (range n))} ]
+               [(dissoc state ::flow/input-filter) 
+                {:out [out-msg]}])
+             ;; else
+             (let [;; wait until all streams are opened.    
+                   state (assoc state ::flow/input-filter
+                                (fn [in]
+                                  (not (get (:opened state) in))))]
+               [state])))
+         
+         
+         :stream-closed
+         (let [state (update state :closed conj in)]
+           (prn "closed" (:closed state))
+           (if (= n (count (:closed state)))
+             [state {:out [{:type :stream-closed}]}]
+             ;;else
+             [state]))
+         
+         :new-packet
+         (let [stream-index (port->idx in)]
+           (prn in stream-index (:pts (:packet msg)))
+           [state {:out [{:type :new-packet
+                          :packet (doto (:packet msg)
+                                    (Map/.put :stream_index stream-index))}]}])))}))
+
+(defn write-file-flow [media file-info]
+  (let [filename (:filename file-info)
+        ;; todo: add format options
+        
+        ;; figure input types.
+        
+        packet-flow (->file-flow media)
+        
+        
+        write-file-pid (gen-pid "write-file")
+        merge-packets-pid (gen-pid "merge-packets")
+        merge-packet-in-conns (into []
+                                    (map-indexed (fn [i in-coord]
+                                                   [in-coord [merge-packets-pid (inkw i)]]))
+                                    (vals (:outs packet-flow)))
+
+        g {:procs {write-file-pid {:proc (-> (write-file-proc)
+                                             flow/map->step
+                                             flow/process)
+                                   :args {:fname filename
+                                          :format (raw/av_guess_format nil
+                                                                       (dt-ffi/string->c filename)
+                                                                       nil)}}
+                   merge-packets-pid {:proc (-> (merge-packets-proc (count (:outs packet-flow)))
+                                                flow/map->step
+                                                flow/process)}}
+           :conns (conj merge-packet-in-conns
+                        [[merge-packets-pid :out] [write-file-pid :in]])
+           :outs {:status [write-file-pid :status]}}
+        
+        g (merge-flows packet-flow
+                       g)]
+    g))
+
+
+
+
+(defn write-file! [media file-info]
+  (let [done-chan (async/chan 1)
+        g (write-file-flow media file-info)
+        
+        report-done-pid (gen-pid "report-done")
+        g (merge-flows 
+           g
+           {:procs {report-done-pid {:proc (-> (onto-chan-proc)
+                                               flow/map->step
+                                               flow/process)
+                                     :args {:chan done-chan}}}
+            :conns [
+                    [(-> g :outs :status)
+                     [report-done-pid :in]]]})
+        
+        g (-> g
+              (add-frame-recycler)
+              (add-packet-recycler))
+        flow (flow/create-flow g)
+        _ (-> flow flow/start monitoring)]
+    (track-flow flow)
+    (flow/resume flow)
+    (async/<!! done-chan)
+    
+    (flow/stop flow)
+    
+    nil))
+
+(defn -main [& args]
+  
+
+  (write-file! {:type :file
+                :file media-fname}
+               {:filename "foo.mp4"})
+  
+  (Thread/sleep (long 3e3) )
+  )
 
