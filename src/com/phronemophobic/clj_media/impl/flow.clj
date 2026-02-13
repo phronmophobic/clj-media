@@ -458,9 +458,7 @@
                        (loop [output-packet output-packet]
                          (let [output-packet (or output-packet
                                                  (async/<!! fresh-packet-chan))
-                               err (raw/avcodec_receive_packet encoder-context output-packet)
-                               
-]
+                               err (raw/avcodec_receive_packet encoder-context output-packet)]
                            (cond
                              (or (zero? err)
                                  (av/einvalid? err))
@@ -604,7 +602,8 @@
   [ins]
   {:describe (fn []
                {:params {:encoders
-                         "map of stream-id -> encoder-info. keys can be :codec and :flags."}
+                         "map of stream-id -> encoder-info. keys can be :codec and :flags."
+                         ::fresh-packet-chan "Channel to acquire fresh packets."}
                 :ins (into {} ins)
                 :outs {:packet "Decoded Frames"
                        ::recycle-frame "frame to recycle"}})
@@ -655,7 +654,7 @@
              {(get-in state [:in->internal in]) [msg]}]
         :internal/ready-for-packet [(assoc state :ready? true)]
         :internal/recycle [state
-                           {:recycle-frame [msg]}]
+                           {::recycle-frame [msg]}]
         :internal/output-packet [state {:packet [msg]}]
         ;; else
         [(assoc state :ready? false) {(get-in state [:in->internal in]) [msg]}])))})
@@ -757,7 +756,8 @@
   {:describe (fn []
                {:params {:n "Number of packets"
                          ::fresh-packet-chan "Channel to put fresh packets on"}
-                :ins {::recycle-packet "Packets to recycle"}
+                :ins {::recycle-packet "Packets to recycle"
+                      ::recycle-stream "Stream of packets to recycle"}
                 :outs {}})
    :init (fn [{:keys [n] ::keys [fresh-packet-chan] :as state}]
            (let [recycle-packet-internal (async/chan)
@@ -820,6 +820,9 @@
    (fn [state in msg]
      (case in
        :update-state [(merge state msg)]
+       ::recycle-stream
+       [state (when-let [packet (:new-packet msg)]
+                {:internal/recycle-packet [packet]})]
        ::recycle-packet
        [state {:internal/recycle-packet [msg]}]))})
 
@@ -828,7 +831,8 @@
                {:params {:n "Number of frames"
                          ::fresh-frame-chan "Channel to put fresh frames on."
                          :recycle-frame "An external channel for recycling frames."}
-                :ins {::recycle-frame "frames to recycle"}})
+                :ins {::recycle-frame "frames to recycle"
+                      ::recycle-stream "Recycles frames from a stream."}})
    :init (fn [{:keys [n] ::keys [fresh-frame-chan] :as state}]
            (let [recycle-frame-internal (or 
                                          (:recycle-frame state)
@@ -892,6 +896,9 @@
      (case in
        :update-state
        [(merge state msg)]
+       ::recycle-stream
+       [state (when-let [frame (:new-frame msg)]
+                {:internal/recycle-frame [frame]})]
        ::recycle-frame
        [state {:internal/recycle-frame [msg]}]))})
 
@@ -1311,7 +1318,9 @@
                  :streams streams}]}])))))}))
 
 (defn packet-frames-init [state msg]
-  (let [stream (:stream msg)]
+  (let [;; todo: make this more consistent
+        stream (or (:stream msg)
+                   (-> msg :streams first))]
     (assoc state :decoder-context (stream->decoder-context stream))))
 
 (defn packet-frames-close [state]
@@ -1751,7 +1760,7 @@
 
 (defn add-packet-recycler
   ([g]
-   (add-packet-recycler g (async/chan 12) 100))
+   (add-packet-recycler g (async/chan 12) 1000))
   ([g fresh-packet-chan n]
    (add-recycler g 
                  (-> (packet-recycler)
@@ -1795,7 +1804,7 @@
 
         filter-ins (into []
                          (map (fn [i]
-                                [(keyword (str "in" i)) "useless docstring"]))
+                                [(inkw i) "useless docstring"]))
                          (range (count input-flows)))
 
         proc {:proc (-> (avfilter/filter-proc filter-ins)
@@ -1820,16 +1829,16 @@
         
 
         g (apply merge-flows input-flows)
-        pid (gen-pid filter-name)
+        filter-pid (gen-pid filter-name)
         
         conns (into []
                     (map-indexed (fn [i g]
-                                   [(-> g :outs :out) [pid (keyword (str "in" i))]]))
+                                   [(-> g :out-coord) [filter-pid (inkw i)]]))
                     input-flows)
         g (merge-flows g
-                       {:procs {pid proc}
+                       {:procs {filter-pid proc}
                         :conns conns
-                        :outs {:out [pid :out]}})]
+                        :out-coord [filter-pid :out]})]
     g))
 
 (defmethod ->frame-flow :concat [media]
@@ -1853,18 +1862,18 @@
         
         conns (into []
                     (map-indexed (fn [i g]
-                                   [(-> g :outs :out) [pid (keyword (str "in" i))]]))
+                                   [(-> g :out-coord) [pid (keyword (str "in" i))]]))
                     input-flows)
         g (merge-flows g
                        {:procs {pid proc}
                         :conns conns
-                        :outs {:out [pid :out]}})]
+                        :out-coord [pid :out]})]
     g))
 
 
 
 (defn file-packet-flow
-  "Packets will be sent out of [:outs :out]"
+  "Packets will be sent out of :out-coord"
   [media]
   (let [file (io/file (:file media))
         
@@ -1877,17 +1886,15 @@
                                        {:filename (java.io.File/.getPath file)}
                                        (when-let [start-timestamp (:start-timestamp media)]
                                          {:start-timestamp start-timestamp}))}}
-           :outs {:out [media-packets-pid :packet]}}]
+           :out-coord [media-packets-pid :packet]}]
     g))
 
 (defn file-frame-flow
   "Creates a flow for receiving frames from a a media source. 
   
-  The coordinate of the input to receive packets will be in [:ins :in]
-  The coordinate of the frames will be at the keypath to `[:outs :out]"
-  [{:keys [stream] :as media}
-   
-   ]
+  The coordinate of the input to receive packets will be in `:in-coord`.
+  The coordinate of the frames will be at the keypath to `:out-coord`"
+  [{:keys [stream] :as media}]
   ;; assume media is a file
   (let [
         
@@ -1923,8 +1930,8 @@
                                        flow/process)}}
            :conns [
                    [[stream-filter-pid :out] [decoder-pid :packet]]]
-           :ins {:in [stream-filter-pid :in]}
-           :outs {:out [decoder-pid :frame]}}]
+           :in-coord [stream-filter-pid :in]
+           :out-coord [decoder-pid :frame]}]
     g))
 
 (defmethod ->frame-flow :file [media]
@@ -1932,8 +1939,8 @@
         frame-flow (file-frame-flow media)
         g (merge-flows packet-flow
                        frame-flow
-                       {:conns [[(-> packet-flow :outs :out)
-                                 (-> frame-flow :ins :in)]]})]
+                       {:conns [[(-> packet-flow :out-coord)
+                                 (-> frame-flow :in-coord)]]})]
     g))
 
 (comment
@@ -1966,7 +1973,7 @@
                                                       (tap> [state msg])
                                                       [state])}))
                                 :args {:chan frame-chan}}}
-            :conns [[(-> g :outs :out) [:frame-out :in]]]})
+            :conns [[(-> g :out-coord) [:frame-out :in]]]})
         
         g (-> g
               (add-frame-recycler)
@@ -2001,7 +2008,7 @@
                                                             :new-frame
                                                             [state {:out [(:frame msg)]}]))}))
                                     :args {:chan frame-chan}}}
-                :conns [[(-> g :outs :out) [:frame-out :in]]]})
+                :conns [[(-> g :out-coord) [:frame-out :in]]]})
 
             g (-> g
                   (add-frame-recycler)
@@ -2154,13 +2161,14 @@
         g {:procs {packet-splitter-pid {:proc (-> (packet-index-splitter (count streams))
                                                   flow/map->step
                                                   flow/process)}}
-           :conns [[(-> packet-flow :outs :out)
+           :conns [[(-> packet-flow :out-coord)
                     [packet-splitter-pid :in]]]
            
-           :outs (into {}
-                       (map-indexed (fn [i stream]
-                                      [stream [packet-splitter-pid (outkw i)]]))
-                       streams)}
+           :format->coord (into {}
+                                (map-indexed (fn [i stream]
+                                               [(assoc stream :container-type :packet)
+                                                [packet-splitter-pid (outkw i)]]))
+                                streams)}
         g (merge-flows packet-flow
                        g)]
     g))
@@ -2175,8 +2183,142 @@
                 [name (:media-type (first outputs))])))
         (media.datafy/list-filters)))
 
+(defn decode-media-type
+  "Given a flow with :format->coord, decodes all coords 
+  with matching `media-type` and a `:container-type` of `:packet`.   
+  
+  Also update :format->coord so that format `:container-type` will be `:frame`."
+  [g media-type]
+  (let [matches-media (fn [[format coord]]
+                        (and (= media-type (:media-type format))
+                             (= :packet (:container-type format))))
+        format-coords (into []
+                            (filter matches-media)
+                            (:format->coord g))
+        g (assoc g
+                 :format->coord (into {}
+                                      (remove matches-media)
+                                      (:format->coord g)))
+        
+        g (reduce (fn [g [format coord]]
+                    (let [decoder-pid (gen-pid "decoder")
+                          decoder-flow {:procs {decoder-pid {:proc (-> (packet->frames)
+                                                                       flow/map->step
+                                                                       flow/process)}}
+                                        :conns [
+                                                [coord [decoder-pid :packet]]]}
+                          g (merge-flows decoder-flow
+                                         g)
+                          g (assoc-in g
+                                      [:format->coord (assoc format :container-type :frame)]
+                                      [decoder-pid :frame])]
+                      g))
+                  g
+                  format-coords)]
+    g))
+
+(defn decode-video
+  "Given a flow with :format->coord, decodes all coords 
+  with video media-type and update :format->coord accordingly."
+  [g]
+  (decode-media-type g :media-type/video))
+
+(defn decode-audio
+  "Given a flow with :format->coord, decodes all coords 
+  with audio media-type and update :format->coord accordingly."
+  [g]
+  (decode-media-type g :media-type/audio))
+
+(defmethod ->file-flow :avfilter [media]
+  (let [{:keys [filter-name opts inputs]} media
+        media-type (avfilter-media-type filter-name)
+        input-flows (into []
+                          (comp (map ->file-flow)
+                                (map #(decode-media-type % media-type)))
+                          (:inputs media))
+        
+        filter-ins (into []
+                         (map (fn [i]
+                                [(inkw i) "useless docstring"]))
+                         (range (count input-flows)))
+        
+        output-format (if-let [format (:output-format media)]
+                        (case (:media-type format)
+                           :media-type/video {:pixel-format (media.datafy/kw->pixel-format (:pixel-format format))
+                                              :media-type :media-type/video}
+                           :media-type/audio
+                           (let [{:keys [channel-layout
+                                         sample-format
+                                         sample-rate]} format]
+                             {:ch-layout (media.datafy/str->ch-layout channel-layout)
+                              :sample-format (media.datafy/kw->sample-format sample-format)
+                              :sample-rate sample-rate
+                              :media-type :media-type/audio}))
+                        ;; else assume output format of first input
+                        (let [first-flow (first input-flows)
+                              format (some (fn [[format _]]
+                                             (when (= media-type
+                                                      (:media-type format))
+                                               format))
+                                           (:format->coord first-flow))]
+                          format))
+        proc {:proc (-> (avfilter/filter-proc filter-ins)
+                        flow/map->step
+                        flow/process)
+              :args (merge {:filter-name filter-name}
+                           (when opts
+                             {:opts opts})
+                           (when (:output-format media)
+                             {:output-format output-format}))}
+        
+        g (apply merge-flows input-flows)
+        filter-pid (gen-pid filter-name)
+        
+        conns (into []
+                    (map-indexed (fn [i g]
+                                   (let [coord (some (fn [[format coord]]
+                                                       (when (= media-type
+                                                                (:media-type format))
+                                                         coord))
+                                                     (:format->coord g))]
+                                     (when (not coord)
+                                       (throw (ex-info "No matching stream"
+                                                       {:media media
+                                                        :input (nth (:inputs media) i)})))
+                                     [coord [filter-pid (inkw i)]])))
+                    input-flows)
+        ;; recycle inputs from secondary inputs
+        ;; that don't match the media type
+        
+        conns (into conns
+                    (mapcat (fn [g]
+                              (eduction
+                               (keep (fn [[format coord]]
+                                       (when (not= media-type
+                                                   (:media-type format))
+                                         [coord (case (:container-type format)
+                                                  :packet [::packet-recycler ::recycle-stream]
+                                                  :frame [::frame-recycler ::recycle-stream])])))
+                               (:format->coord g))) )
+                    (next input-flows))
+        
+
+        format->coord (into {output-format [filter-pid :out]}
+                            ;; pass on any coords from the first input
+                            ;; that don't match the filter media type  
+                            (filter (fn [[format coord]]
+                                      (not= media-type (:media-type format))))
+                            (-> input-flows first :format->coord))
+        g (merge-flows g
+                       {:procs {filter-pid proc}
+                        :conns conns
+                        :format->coord format->coord})]
+    g))
+
 (defn merge-packets-proc
-  "Merge packets from n inputs into a single :out. The :stream_index of packets will be set to their corresponding :ins index."
+  "Merge packets from n inputs into a single :out. 
+  
+  The :stream_index of packets will be set to their corresponding :ins index."
   [n]
   
   (let [port->idx (into {}
@@ -2232,13 +2374,60 @@
                           :packet (doto (:packet msg)
                                     (Map/.put :stream_index stream-index))}]}])))}))
 
+(defn encode-all
+  "Given a flow with :format->coord, encodes all coords
+  with `:container-type` of :frame.
+  
+  `encoders should be a map of media-type -> encoder-info.
+  
+  Example `encoders`:
+  {:media-type/audio {:codec {:id 86018}
+                      :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}
+   :media-type/video {:codec {:id 27}
+                      :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}}
+  "
+  [g encoders]
+  (let [frame-format-coord? (fn [[format coord]]
+                              (= :frame (:container-type format)))
+        frame-format-coords (into []
+                                  (filter frame-format-coord?)
+                                  (:format->coord g))
+        g (assoc g
+                 :format->coord (into {}
+                                      (remove frame-format-coord?)
+                                      (:format->coord g)))
+        
+        g (reduce (fn [g [format coord]]
+                    (let [encoder-pid (gen-pid "encoder")
+                          
+                          encoder-info (get encoders (:media-type format))
+                          encoder-flow {:procs {encoder-pid {:proc (-> (frame-encoder-proc [[:in ""]])
+                                                                      flow/map->step
+                                                                      flow/process)
+                                                             :args {:encoders {:in encoder-info}}}}
+                                        :conns [
+                                                [coord [encoder-pid :in]]]}
+                          g (merge-flows encoder-flow
+                                         g)
+                          g (assoc-in g
+                                      [:format->coord (assoc format :container-type :packet)]
+                                      [encoder-pid :packet])]
+                      g))
+                  g
+                  frame-format-coords)]
+    g))
+
 (defn write-file-flow [media file-info]
   (let [filename (:filename file-info)
         ;; todo: add format options
         
         ;; figure input types.
         
-        packet-flow (->file-flow media)
+        packet-flow (encode-all (->file-flow media)
+                                {:media-type/audio {:codec {:id 86018}
+                                                    :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}
+                                 :media-type/video {:codec {:id 27}
+                                                    :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}})
         
         
         write-file-pid (gen-pid "write-file")
@@ -2246,7 +2435,7 @@
         merge-packet-in-conns (into []
                                     (map-indexed (fn [i in-coord]
                                                    [in-coord [merge-packets-pid (inkw i)]]))
-                                    (vals (:outs packet-flow)))
+                                    (vals (:format->coord packet-flow)))
 
         g {:procs {write-file-pid {:proc (-> (write-file-proc)
                                              flow/map->step
@@ -2255,12 +2444,12 @@
                                           :format (raw/av_guess_format nil
                                                                        (dt-ffi/string->c filename)
                                                                        nil)}}
-                   merge-packets-pid {:proc (-> (merge-packets-proc (count (:outs packet-flow)))
+                   merge-packets-pid {:proc (-> (merge-packets-proc (count (:format->coord packet-flow)))
                                                 flow/map->step
                                                 flow/process)}}
            :conns (conj merge-packet-in-conns
                         [[merge-packets-pid :out] [write-file-pid :in]])
-           :outs {:status [write-file-pid :status]}}
+           :out-coord [write-file-pid :status]}
         
         g (merge-flows packet-flow
                        g)]
@@ -2281,7 +2470,7 @@
                                                flow/process)
                                      :args {:chan done-chan}}}
             :conns [
-                    [(-> g :outs :status)
+                    [(-> g :out-coord)
                      [report-done-pid :in]]]})
         
         g (-> g
@@ -2297,13 +2486,80 @@
     
     nil))
 
+
+(defn test-write-file-flow [media file-info]
+  (let [done-chan (async/chan 1)
+        g (write-file-flow media file-info)
+        
+        report-done-pid (gen-pid "report-done")
+        g (merge-flows 
+           g
+           {:procs {report-done-pid {:proc (-> (onto-chan-proc)
+                                               flow/map->step
+                                               flow/process)
+                                     :args {:chan done-chan}}}
+            :conns [
+                    [(-> g :out-coord)
+                     [report-done-pid :in]]]})
+        
+        g (-> g
+              (add-frame-recycler)
+              (add-packet-recycler))]
+
+    (tap> g)
+    
+    g))
+
 (defn -main [& args]
   
 
-  (write-file! {:type :file
-                :file media-fname}
+  (write-file! {:type :avfilter
+                :filter-name "hstack"
+                :inputs [{:type :file
+                          :file media-fname}
+                         {:type :file
+                          :file media-fname}]}
+               {:filename "foo.mp4"})
+  #_(write-file! {:type :avfilter
+                :filter-name "null"
+                :inputs [{:type :file
+                          :file media-fname}]}
                {:filename "foo.mp4"})
   
   (Thread/sleep (long 3e3) )
   )
 
+(comment
+  (av/probe media-fname)
+  
+  (available-streams {:type :file
+                      :file media-fname})
+  (->file-flow {:type :file
+                :file media-fname})
+  
+
+  (test-write-file-flow
+   {:type :avfilter
+    :filter-name "hstack"
+    :inputs [{:type :file
+              :file media-fname}
+             {:type :file
+              :file media-fname}]}
+   {:filename "foo.mp4"})
+  
+  (write-file-flow 
+   {:type :avfilter
+    :filter-name "null"
+    :inputs [{:type :file
+              :file media-fname}]}
+   {:filename "foo.mp4"})
+  
+  
+  (write-file-flow 
+   {:type :file
+              :file media-fname}
+   {:filename "foo.mp4"})
+  
+  
+  
+  ,)
