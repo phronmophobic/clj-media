@@ -821,7 +821,7 @@
      (case in
        :update-state [(merge state msg)]
        ::recycle-stream
-       [state (when-let [packet (:new-packet msg)]
+       [state (when-let [packet (:packet msg)]
                 {:internal/recycle-packet [packet]})]
        ::recycle-packet
        [state {:internal/recycle-packet [msg]}]))})
@@ -1760,7 +1760,7 @@
 
 (defn add-packet-recycler
   ([g]
-   (add-packet-recycler g (async/chan 12) 1000))
+   (add-packet-recycler g (async/chan 12) 500))
   ([g fresh-packet-chan n]
    (add-recycler g 
                  (-> (packet-recycler)
@@ -1771,6 +1771,58 @@
                  ::fresh-packet-chan
                  fresh-packet-chan
                  n)))
+
+(defonce ^:private conn-counts* (atom {}) )
+
+(defn tracker-proc []
+  {:describe (fn []
+               {:params {:conn "the connection that is being tracked"}
+                :ins {:in ""}
+                :outs {:out ""}})
+   :init (fn [state] 
+           (assoc state :count 0))
+   :transition (fn [state status] state)
+   :transform (fn [state in msg]
+                (let [state (update state :count inc)]
+                  (tap> [(:conn state) (:count state)])
+                  (swap! conn-counts* assoc (:conn state) (:count state))
+                  [state {:out [msg]}]))})
+
+
+(defn tap-conn-counts [g pred]
+  (let [tracked-conns (into []
+                            (filter pred)
+                            (:conns g))
+        
+        g (reduce (fn [g conn]
+                    (let [pid (gen-pid "tracker")
+                          proc {:proc (-> (tracker-proc)
+                                          flow/map->step
+                                          flow/process)
+                                :args {:conn conn}}
+                          
+                          g (update g :conns
+                                    (fn [conns]
+                                      (into [] (remove #{conn}) conns)))
+                          g (merge-flows g
+                                         {:procs {pid proc}
+                                          :conns [
+                                                  [(first conn)
+                                                    [pid :in]]
+                                                  [[pid :out]
+                                                   (second conn)]]})]
+                      g))
+                  g
+                  tracked-conns)]
+    g))
+
+(defn instrument-recycler [g]
+  ;; find all the connections to ::packet-recycler ::recycle-packet
+  ;; keep counts
+  (-> g
+      (tap-conn-counts (fn [conn]
+                         (some #(= ::packet-recycler %)
+                               (map first conn))))))
 
 
 (defn merge-flows
@@ -1850,7 +1902,7 @@
 
         concat-ins (into []
                          (map (fn [i]
-                                [(keyword (str "in" i)) "useless docstring"]))
+                                [(inkw i) "useless docstring"]))
                          (range (count input-flows)))
 
         proc {:proc (-> (concat-frames-proc concat-ins)
@@ -1862,7 +1914,7 @@
         
         conns (into []
                     (map-indexed (fn [i g]
-                                   [(-> g :out-coord) [pid (keyword (str "in" i))]]))
+                                   [(-> g :out-coord) [pid (inkw i)]]))
                     input-flows)
         g (merge-flows g
                        {:procs {pid proc}
@@ -2153,7 +2205,7 @@
 (defmethod ->file-flow :file [media]
   (let [;; setup flow parts to read file.
         
-        {:keys [streams]} (av/probe media-fname)
+        {:keys [streams]} (av/probe (:file media))
         packet-flow (file-packet-flow media)
         
         packet-splitter-pid (gen-pid "packet-splitter")
