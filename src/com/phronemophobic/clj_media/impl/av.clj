@@ -23,6 +23,7 @@
    ;; com.sun.jna.ptr.ByteByReference
    java.nio.ByteOrder
    java.lang.ref.Cleaner
+   java.util.Map
    ;; com.sun.jna.Structure
 )
   (:gen-class))
@@ -37,10 +38,7 @@
   o)
 
 (defn ->avrational [num den]
-  (datafy-media/->avrational num den)
-  #_(doto (AVRational.)
-    (.writeField "num" (int num))
-    (.writeField "den" (int den))))
+   (datafy-media/->avrational num den))
 
 
 (defn error->str [err]
@@ -371,7 +369,7 @@
                       (bit-and (:flags output-format+)
                                AVFMT_GLOBALHEADER)))
             (doto encoder-context
-              (.put :flags
+              (Map/.put :flags
                     (int (bit-or (:flags encoder-context )
                                  AV_CODEC_FLAG_GLOBAL_HEADER)))))
 
@@ -441,16 +439,16 @@
                             0))
 
         _ (doto encoder-context
-            (.put :width (int width))
-            (.put :height (int height))
-            (.put :gop_size (int gop-size))
+            (Map/.put :width (int width))
+            (Map/.put :height (int height))
+            (Map/.put :gop_size (int gop-size))
             ;; (.writeField "max_b_frames" (int max_b_frames))
-            (.put :pix_fmt pixel-format)
-            (.put :time_base time-base))
+            (Map/.put :pix_fmt pixel-format)
+            (Map/.put :time_base time-base))
 
         _ (when-let [bit-rate (:bit-rate format)]
             (doto encoder-context
-              (.put :bit_rate bit-rate)))]
+              (Map/.put :bit_rate bit-rate)))]
     encoder-context))
 
 (defn audio-encoder-context [format]
@@ -475,11 +473,10 @@
                    ch-layout)))
 
         _ (doto encoder-context
-            ;; (.writeField "ch_layout" ch-layout)
-            (.put :sample_rate sample-rate)
-            (.put :sample_fmt sample-fmt)
-            (.put :bit_rate bit-rate)
-            (.put :time_base (->avrational 1 sample-rate)))]
+            (Map/.put :sample_rate sample-rate)
+            (Map/.put :sample_fmt sample-fmt)
+            (Map/.put :bit_rate bit-rate)
+            (Map/.put :time_base (->avrational 1 sample-rate)))]
 
     encoder-context))
 
@@ -538,7 +535,7 @@
                             {})))
 
         _ (doto decoder-context
-            (.put decoder-context :time_base (:time_base stream+ ))
+            (Map/.put decoder-context :time_base (:time_base stream+ ))
             #_(.writeField "time_base"
                          (.readField stream+ "time_base")))]
 
@@ -578,7 +575,7 @@
                                                   (first output-format-context*))
         output-format-context (doto output-format-context
                                 #_(.writeField "pb" (.getValue output-io-context*))
-                                (.put :pb output-io-context))]
+                                (Map/.put :pb output-io-context))]
     output-format-context))
 
 
@@ -689,21 +686,21 @@
   (let [frame (av_frame_alloc)]
     (if time-base
       (doto frame
-       (.put :time_base (datafy-media/clj->avrational time-base)))
+       (Map/.put :time_base (datafy-media/clj->avrational time-base)))
       ;; else
       (throw (ex-info "Time base required when creating frames."
                       {:frame m})))
 
     (if pts
       (doto frame
-        (.put :pts (long pts)))
+        (Map/.put :pts (long pts)))
       ;; else
       (throw (ex-info "pts required when creating frames."
                       {:frame m})))
 
     (when key-frame?
       (doto frame
-        (.put :key_frame (case key-frame?
+        (Map/.put :key_frame (case key-frame?
                            (1 true) (int 1)
                            ;; else
                            (int 0)))))
@@ -729,39 +726,41 @@
                             {:frame m})))
 
           (doto frame
-            (.put :nb_samples (int num-samples))
-            (.put :format sample-format)
-            (.put :sample_rate sample-rate))
+            (Map/.put :nb_samples (int num-samples))
+            (Map/.put :format sample-format)
+            (Map/.put :sample_rate sample-rate))
           (assert
            (zero? (raw/av_channel_layout_copy
                    (.getPointer (:ch_layout frame))
                    (.getPointer ch-layout))))
-          (assert
-           (>= (raw/av_frame_get_buffer frame 0)
-               0))
+          (when (neg? (raw/av_frame_get_buffer frame 0)) 
+            (throw (ex-info "Error allocating frame buffer.")))
           ;; linesize might not match the byte array size
           ;; since linesize is sometimes set for a particular alignment
           ;; I think line size is set by raw/av_frame_get_buffer
-          (when (> (alength bytes)
-                   (aget (:linesize frame) 0))
+          #_(when (> (alength bytes)
+                   (first (:linesize frame)))
                 (throw (ex-info "Bytes are the wrong length for sample format."
                                 {:frame m
                                  :bytes bytes
-                                 :actual-size (alength bytes)
-                                 :expected-length (aget (:linesize frame) 0)})))
-          (.write (.getPointer (aget (:data frame) 0)) 0 bytes 0 (alength bytes)))
+                                 :actual-size (native-buffer/native-buffer-byte-len bytes)
+                                 :expected-length (first (:linesize frame))})))
+          (dt/copy! bytes
+                    (native-buffer/wrap-address (first (:data frame))
+                                                (first (:linesize frame)))))
 
         :media-type/video
         (let [{:keys [pixel-format
                       width
-                      height]} (datafy-media/map->format format)]
+                      height]} (datafy-media/map->format format)
+              line-size (:line-size format)]
           (doto frame
-            (.put :width (int width))
-            (.put :height (int height))
-            (.put :format pixel-format))
-          (if-let [line-size (:line-size format)]
+            (Map/.put :width (int width))
+            (Map/.put :height (int height))
+            (Map/.put :format pixel-format))
+          (if line-size
             (doto frame
-              (.put :linesize
+              (Map/.put :linesize
                     (doto (int-array 8)
                       (aset 0 line-size))))
             (throw (ex-info ":line-size must be set when creating video frames."
@@ -770,7 +769,9 @@
            (>= (raw/av_frame_get_buffer frame 0)
                0))
 
-          (.write (.getPointer (aget (:data frame) 0)) 0 bytes 0 (alength bytes)))
+          (dt/copy! bytes 
+                    (native-buffer/wrap-address (first (:data frame))
+                                                (* line-size height))))
 
         nil (throw (ex-info "frame requires `:media-type` to be set."
                             {:frame m})))

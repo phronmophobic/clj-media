@@ -45,6 +45,25 @@
   ([] clojure.lang.PersistentQueue/EMPTY)
   ([xs] (into (queue) xs)))
 
+(defn merge-flows
+  "Combine :conns and :procs from all gs."
+  [& gs]
+  (reduce
+   (fn [g1 g2]
+     (merge
+      (when (or (:procs g1) (:procs g2))
+        {:procs (merge (:procs g1)
+                       (:procs g2))})
+      (when (or (:conns g1) (:conns g2))
+        {:conns (into [] cat [(:conns g1) (:conns g2)])})
+      (dissoc g1 :conns :procs)
+      (dissoc g2 :conns :procs)))
+   (first gs)
+   (next gs)))
+
+(defn gen-pid [prefix]
+  (-> (gensym (str prefix "-")) name keyword))
+
 ;; * Todo
 ;; - make sure packets and frames get cleaned up when flows stop.
 ;; - need to add seeking to reading files(raw/avformat_seek_file)
@@ -329,15 +348,19 @@
                                            _ (prn "creating stream"  encoder-format)
 
                                            encoder-context (av/encoder-context encoder-format)
+                                           _ (assert output-codec)
+                                           output-codec (dt-ffi/ptr->struct 
+                                                         :AVCodec
+                                                         (:codec encoder-context))
+                                           
                                            _ (when-let [flags (:flags encoder-info)]
                                                (when (not (zero? flags))
                                                  (doto encoder-context
                                                    (Map/.put :flags
-                                                         (int (bit-or (:flags encoder-context)
-                                                                      (:flags encoder-info)))))))
-                                           
-                                           output-codec (:codec encoder-context)
-                                           _ (assert output-codec)
+                                                         (int (bit-and
+                                                               (:capabilities output-codec)
+                                                               (bit-or (:flags encoder-context)
+                                                                       (:flags encoder-info))))))))
 
                                            err (raw/avcodec_open2 encoder-context output-codec nil)
                                            _ (when (neg? err)
@@ -1825,24 +1848,7 @@
                                (map first conn))))))
 
 
-(defn merge-flows
-  "Combine :conns and :procs from all gs."
-  [& gs]
-  (reduce
-   (fn [g1 g2]
-     (merge
-      (when (or (:procs g1) (:procs g2))
-        {:procs (merge (:procs g1)
-                       (:procs g2))})
-      (when (or (:conns g1) (:conns g2))
-        {:conns (into [] cat [(:conns g1) (:conns g2)])})
-      (dissoc g1 :conns :procs)
-      (dissoc g2 :conns :procs)))
-   (first gs)
-   (next gs)))
 
-(defn gen-pid [prefix]
-  (-> (gensym (str prefix "-")) name keyword))
 
 
 (defmulti ->frame-flow :type)
@@ -2193,15 +2199,6 @@
   (ns-unmap *ns* '->file-flow)
   (defmulti ->file-flow :type))
 
-#_#_(defmulti available-streams :type)
-(defmethod available-streams :file [media]
-  (let [{:keys [streams]} (av/probe (:file media))]
-    (into []
-          (map (fn [format]
-                 {:format format
-                  :container-types #{:frame :packet}}))
-          streams)))
-
 (defmethod ->file-flow :file [media]
   (let [;; setup flow parts to read file.
         
@@ -2223,6 +2220,184 @@
                                 streams)}
         g (merge-flows packet-flow
                        g)]
+    g))
+
+(defn wrap-frame-source-input-filter [transform]
+  (fn [state in msg]
+    (let [[state outs] (transform state in msg)]
+      (if (:done? state)
+        [(assoc state
+                ::produce false
+                ::flow/input-filter (constantly false))
+         outs]
+        (let [fresh-frame-count (count (:fresh-frames state))
+              
+              input-filter
+              (cond
+                (> fresh-frame-count 10) (fn [in] (not= in :fresh-frame))
+                (zero? fresh-frame-count) #{:fresh-frame}
+                :else nil)
+              state (if input-filter
+                      (assoc state ::flow/input-filter input-filter)
+                      (dissoc state ::flow/input-filter))]
+          [state outs])))))
+
+(defn write-frame!
+  "Given an `AVFrame` frame, update its content from the `frame-info` map data."
+  [frame frame-info]
+  (let [{:keys [time-base pts key-frame? format bytes]} frame-info]
+    (if time-base
+      (doto frame
+        (Map/.put :time_base (media.datafy/clj->avrational time-base)))
+      ;; else
+      (throw (ex-info "Time base required when creating frames."
+                      {:frame frame-info})))
+    
+    (if pts
+      (doto frame
+        (Map/.put :pts (long pts)))
+      ;; else
+      (throw (ex-info "pts required when creating frames."
+                      {:frame frame-info})))
+    
+    (when key-frame?
+      (doto frame
+        (Map/.put :key_frame (case key-frame?
+                               (1 true) (int 1)
+                               ;; else
+                               (int 0)))))
+    
+    (if (not bytes)
+      (throw (ex-info "bytes required when creating frames."
+                      {:frame frame-info}))
+      ;; else
+      (case (:media-type format)
+        :media-type/audio
+        (let [{:keys [ch-layout
+                      sample-format
+                      sample-rate]} (media.datafy/map->format format)
+              
+              bytes-per-sample (raw/av_get_bytes_per_sample sample-format)
+              num-output-channels (-> ch-layout
+                                      :nb_channels)
+              ;; calculation assumes non-planar format
+              num-samples
+              (Long/divideUnsigned
+               (alength bytes)
+               (* bytes-per-sample num-output-channels))]
+          
+          (when (= 1 (raw/av_sample_fmt_is_planar sample-format))
+            (throw (ex-info "Cannot create planar audio frames."
+                            {:frame frame-info})))
+          
+          (doto frame
+            (Map/.put :nb_samples (int num-samples))
+            (Map/.put :format sample-format)
+            (Map/.put :sample_rate sample-rate))
+          (assert
+           (zero? (raw/av_channel_layout_copy
+                   (:ch_layout frame)
+                   ch-layout)))
+          (when (neg? (raw/av_frame_get_buffer frame 0)) 
+            (throw (ex-info "Error allocating frame buffer.")))
+          ;; linesize might not match the byte array size
+          ;; since linesize is sometimes set for a particular alignment
+          ;; I think line size is set by raw/av_frame_get_buffer
+          #_(when (> (alength bytes)
+                     (first (:linesize frame)))
+              (throw (ex-info "Bytes are the wrong length for sample format."
+                              {:frame m
+                               :bytes bytes
+                               :actual-size (native-buffer/native-buffer-byte-len bytes)
+                               :expected-length (first (:linesize frame))})))
+          (dt/copy! bytes
+                    (native-buffer/wrap-address (first (:data frame))
+                                                (first (:linesize frame)))))
+        
+        :media-type/video
+        (let [{:keys [pixel-format
+                      width
+                      height]} (media.datafy/map->format format)
+              line-size (:line-size format)]
+          (doto frame
+            (Map/.put :width (int width))
+            (Map/.put :height (int height))
+            (Map/.put :format pixel-format))
+          (if line-size
+            (dt/set-value! (:linesize frame) 0 line-size)
+            (throw (ex-info ":line-size must be set when creating video frames."
+                            {:frame frame-info})))
+          (assert
+           (>= (raw/av_frame_get_buffer frame 0)
+               0))
+          
+          (dt/copy! bytes 
+                    (native-buffer/wrap-address (first (:data frame))
+                                                (* line-size height))))
+        
+        ;; else
+        (throw (ex-info "frame requires `:media-type` to be set."
+                            {:frame frame-info})))))
+  
+  frame)
+
+(defn frame-source-proc []
+  (wrap-producer
+   {:describe (fn []
+                {:params {::fresh-frame-chan "Channel to acquire fresh frames"
+                          :format "The format for the frames."
+                          :frames "Source of frames"}
+                 :outs {:out "frames"}})
+    :init (fn [m]
+            (assoc m
+                   :fresh-frames (queue)
+                   ::flow/in-ports {:fresh-frame (::fresh-frame-chan m)}
+                   ::flow/input-filter #{:fresh-frame}))
+    :transform
+    (wrap-transform-tap
+     (wrap-frame-source-input-filter
+      (fn [state in msg]
+        (case in
+          :fresh-frame
+          [(-> state
+               (update :fresh-frames conj msg)
+               (assoc ::produce (seq (:frames state))))]
+          
+          ;; else, produce
+          (if (not (:init? state))
+            (let [stream-format (media.datafy/map->format (:format state))]
+              [(assoc state :init? true)
+               {:out [{:type :stream-opened
+                       :format stream-format}]}])
+            
+            ;; else, already inited
+            (if-let [frame-info (first (:frames state))]
+              (let [
+                    frame (doto (peek (:fresh-frames state))
+                            (write-frame! frame-info))
+
+                    state (-> state
+                              (update :fresh-frames pop)
+                              (update :frames next))]
+                [state {:out [{:type :new-frame
+                               :frame frame}]}])
+              ;; else we're done
+              [(assoc state :done? true)
+               {:out [{:type :stream-closed}]}]))))))}))
+
+(defmethod ->file-flow :frames [media]
+  (let [;; setup flow parts to read file.
+        {:keys [format frames]} media
+        
+        frame-flow-pid (gen-pid "frame-source")
+
+        g {:procs {frame-flow-pid {:proc (-> (frame-source-proc) 
+                                             flow/map->step
+                                             flow/process)
+                                   :args {:format format
+                                          :frames frames}}}
+           :format->coord {{:container-type :frame
+                            :media-type (:media-type format)} [frame-flow-pid :out]}}]
     g))
 
 (def avfilter-media-type 
@@ -2295,7 +2470,7 @@
                          (range (count input-flows)))
         
         output-format (if-let [format (:output-format media)]
-                        (case (:media-type format)
+                        (case media-type
                            :media-type/video {:pixel-format (media.datafy/kw->pixel-format (:pixel-format format))
                                               :media-type :media-type/video}
                            :media-type/audio
@@ -2355,6 +2530,7 @@
                     (next input-flows))
         
 
+        output-format (assoc output-format :container-type :frame)
         format->coord (into {output-format [filter-pid :out]}
                             ;; pass on any coords from the first input
                             ;; that don't match the filter media type  
@@ -2474,12 +2650,23 @@
         ;; todo: add format options
         
         ;; figure input types.
+        guessed-format (raw/av_guess_format nil
+                                            (dt-ffi/string->c filename)
+                                            nil)
+
+        ;; default to h264 for mp4
+        ;; I think this is what the ffmpeg cli does
+        video-encoder-info (if (= "mp4"
+                                  (dt-ffi/c->string (:name guessed-format)))
+                             {:codec {:id 27} :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}
+                             {:codec {:id (:video_codec guessed-format)}
+                              :flags (:flags guessed-format)})
+        audio-encoder-info {:codec {:id (:audio_codec guessed-format)}
+                            :flags (:flags guessed-format)}
         
         packet-flow (encode-all (->file-flow media)
-                                {:media-type/audio {:codec {:id 86018}
-                                                    :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}
-                                 :media-type/video {:codec {:id 27}
-                                                    :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}})
+                                {:media-type/audio audio-encoder-info
+                                 :media-type/video video-encoder-info})
         
         
         write-file-pid (gen-pid "write-file")
@@ -2493,9 +2680,7 @@
                                              flow/map->step
                                              flow/process)
                                    :args {:fname filename
-                                          :format (raw/av_guess_format nil
-                                                                       (dt-ffi/string->c filename)
-                                                                       nil)}}
+                                          :format guessed-format}}
                    merge-packets-pid {:proc (-> (merge-packets-proc (count (:format->coord packet-flow)))
                                                 flow/map->step
                                                 flow/process)}}

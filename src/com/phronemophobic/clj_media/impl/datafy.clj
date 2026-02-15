@@ -681,10 +681,9 @@
     (case (:media-type format)
       :media-type/audio
       (assoc format
-             :ch-layout
-             (doto (str->ch-layout
-                    (:channel-layout format))
-               .read)
+             :ch-layout (str->ch-layout
+                         (:channel-layout format))
+               
              :sample-format (int (kw->sample-format
                                   (:sample-format format)))
              :sample-rate (int (:sample-rate format)))
