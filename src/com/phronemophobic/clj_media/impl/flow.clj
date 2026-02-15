@@ -348,10 +348,11 @@
                                            _ (prn "creating stream"  encoder-format)
 
                                            encoder-context (av/encoder-context encoder-format)
-                                           _ (assert output-codec)
+                                           
                                            output-codec (dt-ffi/ptr->struct 
                                                          :AVCodec
                                                          (:codec encoder-context))
+                                           _ (assert output-codec)
                                            
                                            _ (when-let [flags (:flags encoder-info)]
                                                (when (not (zero? flags))
