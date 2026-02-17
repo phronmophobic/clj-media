@@ -352,7 +352,11 @@
    ;; channel-layout is deprecated
    ;; :channel-layout (:channel_layout codec-context)
    :frame-size (:frame_size codec-context)
-   :ch-layout (:ch_layout codec-context)})
+   :ch-layout (let [;; channel layout may mutate,
+                    ;; make a copy!
+                    ch-layout (dt-struct/new-struct :AVChannelLayout {:container-type :native-heap})]
+                (raw/av_channel_layout_copy ch-layout (:ch_layout codec-context))
+                ch-layout)})
 
 (defn codec-context-format [codec-context]
   (condp = (:codec_type codec-context)
