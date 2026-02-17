@@ -2378,36 +2378,35 @@
                    ::flow/in-ports {:fresh-frame (::fresh-frame-chan m)}
                    ::flow/input-filter #{:fresh-frame}))
     :transform
-    (wrap-transform-tap
-     (wrap-frame-source-input-filter
-      (fn [state in msg]
-        (case in
-          :fresh-frame
-          [(-> state
-               (update :fresh-frames conj msg)
-               (assoc ::produce (seq (:frames state))))]
-          
-          ;; else, produce
-          (if (not (:init? state))
-            (let [stream-format (media.datafy/map->format (:format state))]
-              [(assoc state :init? true)
-               {:out [{:type :stream-opened
-                       :format stream-format}]}])
-            
-            ;; else, already inited
-            (if-let [frame-info (first (:frames state))]
-              (let [
-                    frame (doto (peek (:fresh-frames state))
-                            (write-frame! frame-info))
-
-                    state (-> state
-                              (update :fresh-frames pop)
-                              (update :frames next))]
-                [state {:out [{:type :new-frame
-                               :frame frame}]}])
-              ;; else we're done
-              [(assoc state :done? true)
-               {:out [{:type :stream-closed}]}]))))))}))
+    (wrap-frame-source-input-filter
+     (fn [state in msg]
+       (case in
+         :fresh-frame
+         [(-> state
+              (update :fresh-frames conj msg)
+              (assoc ::produce (seq (:frames state))))]
+         
+         ;; else, produce
+         (if (not (:init? state))
+           (let [stream-format (media.datafy/map->format (:format state))]
+             [(assoc state :init? true)
+              {:out [{:type :stream-opened
+                      :format stream-format}]}])
+           
+           ;; else, already inited
+           (if-let [frame-info (first (:frames state))]
+             (let [
+                   frame (doto (peek (:fresh-frames state))
+                           (write-frame! frame-info))
+                   
+                   state (-> state
+                             (update :fresh-frames pop)
+                             (update :frames next))]
+               [state {:out [{:type :new-frame
+                              :frame frame}]}])
+             ;; else we're done
+             [(assoc state :done? true)
+              {:out [{:type :stream-closed}]}])))))}))
 
 (defmethod ->file-flow :frames [media]
   (let [;; setup flow parts to read file.
