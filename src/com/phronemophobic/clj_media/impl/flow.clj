@@ -2246,6 +2246,44 @@
                        g)]
     g))
 
+(defn filter-format-file-flow [media pred]
+  (let [g (->file-flow (:media media))
+        
+        conns (into []
+                    (keep (fn [[format coord]]
+                            (when (not (pred format))
+                              (case (:container-type format)
+                                :packet [coord
+                                         [::packet-recycler ::recycle-stream]]
+                                :frame [coord
+                                        [::frame-recycler ::recycle-stream]]))))
+                    (:format->coord g))
+        format->coord (into {}
+                            (filter (fn [[format coord]]
+                                      (pred format)))
+                            (:format->coord g))
+        
+        g (merge-flows g
+                       {:conns conns
+                        :format->coord format->coord})]
+    g))
+
+(defmethod ->file-flow :filter-video [media]
+  (filter-format-file-flow media #(= :media-type/video
+                                     (:media-type %))))
+
+(defmethod ->file-flow :remove-video [media]
+  (filter-format-file-flow media #(not= :media-type/video
+                                        (:media-type %))))
+
+(defmethod ->file-flow :filter-audio [media]
+  (filter-format-file-flow media #(= :media-type/audio
+                                     (:media-type %))))
+
+(defmethod ->file-flow :remove-audio [media]
+  (filter-format-file-flow media #(not= :media-type/audio
+                                        (:media-type %))))
+
 (defn wrap-frame-source-input-filter [transform]
   (fn [state in msg]
     (let [[state outs] (transform state in msg)]
