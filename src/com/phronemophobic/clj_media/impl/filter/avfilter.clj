@@ -519,6 +519,7 @@
                           ;; outputs
                           ready-frame-chan
                           out-chan
+                          eof-chan
                           recycle-frame-chan]
   (let [port->idx (into {}
                         (map-indexed (fn [i ch]
@@ -528,44 +529,84 @@
      (try
        (loop [state {}
               output-frame nil]
-         (async/>!! ready-frame-chan true)
-         (let [[msg port] (async/alts!! in-chans)]
-           (if (nil? msg)
-             ;; frame-chan closed. do cleanup
-             (filter-state-close state)
-             ;; else, process message
-             (case (:type msg)
-               :stream-opened
-               (let [input-format (:format msg)
-                     state (assoc-in state [:input-formats (port->idx port)] input-format)
-                     
-                     state (if (= (count (:input-formats state))
-                                  (count in-chans))
-                             
-                             (let [state (assoc state :input-formats (into [] 
-                                                                           (->> (:input-formats state)
-                                                                                (sort-by first)
-                                                                                (map second))))
-                                   state (filter-state-init state filter-name (:input-formats state) output-format opts)]
-                               (async/>!! out-chan {:type :stream-opened
-                                                    :format (:output-format state)})
-                               state)
-                             ;; else
-                             state)]
-                 (recur state output-frame))
-               
-               :new-frame
-               (let [
-                     input-frame (:frame msg)
-                     
-                     buffer-context (nth (:input-contexts state) (port->idx port))]
+         
+         (when (not (:eof? state))
+           (async/>!! ready-frame-chan true)
+           (let [[msg port] (async/alts!! in-chans)]
+             (if (nil? msg)
+               ;; frame-chan closed. do cleanup
+               (filter-state-close state)
+               ;; else, process message
+               (case (:type msg)
+                 :stream-opened
+                 (let [input-format (:format msg)
+                       state (assoc-in state [:input-formats (port->idx port)] input-format)
+                       
+                       state (if (= (count (:input-formats state))
+                                    (count in-chans))
+                               
+                               (let [state (assoc state :input-formats (into [] 
+                                                                             (->> (:input-formats state)
+                                                                                  (sort-by first)
+                                                                                  (map second))))
+                                     state (filter-state-init state filter-name (:input-formats state) output-format opts)]
+                                 (async/>!! out-chan {:type :stream-opened
+                                                      :format (:output-format state)})
+                                 state)
+                               ;; else
+                               state)]
+                   (recur state output-frame))
                  
-                 ;; write frame
-                 (av_buffersrc_write_frame buffer-context input-frame)
-                 (async/put! recycle-frame-chan input-frame)
+                 :new-frame
+                 (let [
+                       input-frame (:frame msg)
+                       
+                       buffer-context (nth (:input-contexts state) (port->idx port))]
+                   
+                   ;; write frame
+                   (av_buffersrc_write_frame buffer-context input-frame)
+                   (async/put! recycle-frame-chan input-frame)
+                   
+                   ;; try to get next frame
+                   (let [[state output-frame] 
+                         (loop [output-frame output-frame]
+                           (let [output-frame (or output-frame
+                                                  (async/<!! fresh-frame-chan))
+                                 err (av_buffersink_get_frame_flags (:buffersink-context state)
+                                                                    output-frame
+                                                                    0)]
+                             (cond
+                               (zero? err)
+                               (do (async/>!! out-chan {:type :new-frame
+                                                        :frame output-frame})
+                                   (recur nil))
+                               
+                               (av/eagain? err) [state output-frame]
+                               
+                               (av/eof? err)
+                               (let [;; not totally sure what the right thing to do is
+                                     ;; for now, close everything and stop receiving input
+                                     state (-> state
+                                               (filter-state-close)
+                                               (assoc :eof? true)
+                                               (assoc :closed #{})
+                                               (dissoc :input-formats))]
+                                 (async/>!! out-chan {:type :stream-closed})
+                                 (async/>!! eof-chan true)
+                                 [state output-frame])
+                               
+                               :else
+                               (throw (ex-info "Error filtering" 
+                                               {:filter-name filter-name
+                                                :opts opts
+                                                :error-code err
+                                                :error-msg (av/error->str err)})))))]
+                     (recur state output-frame)))
                  
-                 ;; try to get next frame
-                 (let [output-frame 
+                 :stream-closed
+                 (let [_ (av_buffersrc_write_frame (nth (:input-contexts state) (port->idx port)) nil)
+                       
+                       output-frame
                        (loop [output-frame output-frame]
                          (let [output-frame (or output-frame
                                                 (async/<!! fresh-frame-chan))
@@ -573,67 +614,44 @@
                                                                   output-frame
                                                                   0)]
                            (cond
-                             (zero? err)
-                             (do (async/>!! out-chan {:type :new-frame
-                                                      :frame output-frame})
-                                 (recur nil))
+                             (zero? err) (do (async/>!! out-chan {:type :new-frame
+                                                                  :frame output-frame})
+                                             (recur nil))
                              
                              (av/eagain? err) output-frame
                              
-                             (av/eof? err) (throw (ex-info "Unexpected EOF." {}))                       
+                             
+                             (av/eof? err) output-frame
                              
                              :else
                              (throw (ex-info "Error filtering" 
                                              {:filter-name filter-name
                                               :opts opts
                                               :error-code err
-                                              :error-msg (av/error->str err)})))))]
-                   (recur state output-frame)))
-               
-               :stream-closed
-               (let [_ (av_buffersrc_write_frame (nth (:input-contexts state) (port->idx port)) nil)
-                     
-                     output-frame
-                     (loop [output-frame output-frame]
-                       (let [output-frame (or output-frame
-                                              (async/<!! fresh-frame-chan))
-                             err (av_buffersink_get_frame_flags (:buffersink-context state)
-                                                                output-frame
-                                                                0)]
-                         (cond
-                           (zero? err) (do (async/>!! out-chan {:type :new-frame
-                                                                :frame output-frame})
-                                           (recur nil))
-                           
-                           (av/eagain? err) output-frame
-                           
-                           
-                           (av/eof? err) output-frame
-                           
-                           :else
-                           (throw (ex-info "Error filtering" 
-                                           {:filter-name filter-name
-                                            :opts opts
-                                            :error-code err
-                                            :error-msg (av/error->str err)})))))
-                     
-                     state (update state :closed (fnil conj #{}) (port->idx port))
-                     state (if (< (count (:closed state))
-                                  (count in-chans))
-                             state
-                             ;; else, everyone is closed.
-                             ;; cleanup
-                             (do 
-                               (async/>!! out-chan {:type :stream-closed})
-                               (-> state
-                                   (filter-state-close)
-                                   (assoc :closed #{})
-                                   (dissoc :input-formats))))]
-                 (recur state output-frame))))))
+                                              :error-msg (av/error->str err)})))))
+                       
+                       state (update state :closed (fnil conj #{}) (port->idx port))
+                       state (if (< (count (:closed state))
+                                    (count in-chans))
+                               state
+                               ;; else, everyone is closed.
+                               ;; cleanup
+                               (do 
+                                 (async/>!! out-chan {:type :stream-closed})
+                                 (async/>!! eof-chan true)
+                                 (-> state
+                                     (filter-state-close)
+                                     (assoc :closed #{})
+                                     (assoc :eof? true)
+                                     (dissoc :input-formats))))]
+                   (recur state output-frame)))))))
        (catch Throwable t
          (tap> t)
          (prn t))
        (finally
+         (run! async/close! in-chans)
+         (async/close! ready-frame-chan)
+
          (println "exiting filter"))))))
 
 (defn wrap-filter-input-filter [ins transform]
@@ -659,20 +677,22 @@
                   ;; else
                   state)
           
-          state (case (:status state)
-                  (:closed :opening) (assoc state
-                                            ::flow/input-filter
-                                            (fn [id] 
+          state (if (:eof? state)
+                  (dissoc state ::flow/input-filter)
+                  (case (:status state)
+                    (:closed :opening) (assoc state
+                                              ::flow/input-filter
+                                              (fn [id] 
+                                                (or (not (contains? ins id))
+                                                    (and (not (contains? (:ready-ins state)
+                                                                         id))
+                                                         (:ready? state)))))
+                    (:open :closing) (assoc state
+                                            ::flow/input-filter 
+                                            (fn [id]
                                               (or (not (contains? ins id))
-                                                  (and (not (contains? (:ready-ins state)
-                                                                       id))
-                                                       (:ready? state)))))
-                  (:open :closing) (assoc state
-                                          ::flow/input-filter 
-                                          (fn [id]
-                                            (or (not (contains? ins id))
-                                                (and (contains? (:ready-ins state) id)
-                                                     (:ready? state))))))]
+                                                  (and (contains? (:ready-ins state) id)
+                                                       (:ready? state)))))))]
       [state outs])))
 
 (defn filter-proc
@@ -699,7 +719,8 @@
 
                  internal-ready-for-frame-chan (async/chan 1)
                  internal-recycle-chan (async/chan 1)
-                 internal-output-frame-chan (async/chan 5)]
+                 internal-output-frame-chan (async/chan 5)
+                 internal-eof-chan (async/chan 1)]
              (filter-proc-thread filter-name
                                  opts
                                  (:output-format state)
@@ -707,6 +728,7 @@
                                  fresh-frame-chan
                                  internal-ready-for-frame-chan
                                  internal-output-frame-chan
+                                 internal-eof-chan
                                  internal-recycle-chan)
              (assoc state
                     :status :closed
@@ -715,7 +737,8 @@
                     :in->internal in->internal
                     ::flow/in-ports {:internal/ready-for-frame internal-ready-for-frame-chan
                                      :internal/output-frame internal-output-frame-chan
-                                     :internal/recycle internal-recycle-chan}
+                                     :internal/recycle internal-recycle-chan
+                                     :internal/eof internal-eof-chan}
                     ::flow/out-ports (zipmap (map second in->internal)  
                                              internal-in-chans))))
    :transition (fn [state status]
@@ -733,15 +756,19 @@
     (into #{} (map first) ins)
     (fn [state in msg]
       (case in
-        
+        :internal/eof [(assoc state :eof? true)]
         :internal/ready-for-frame [(assoc state :ready? true)]
         :internal/recycle [state
                            {::impl.flow/recycle-frame [msg]}]
         :internal/output-frame [state {:out [msg]}]
         
         ;; else
-        [(assoc state :ready? false)
-         {(get-in state [:in->internal in]) [msg]}])))})
+        
+        (if (:eof? state)
+          [state (when-let [frame (:frame msg)]
+                   {::impl.flow/recycle-frame [frame]})]
+          [(assoc state :ready? false)
+           {(get-in state [:in->internal in]) [msg]}]))))})
 
 
 (defrecord AVFilterMedia [filter-name opts media-type media]
