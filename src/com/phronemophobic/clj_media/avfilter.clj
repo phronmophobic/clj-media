@@ -30,7 +30,10 @@ Supported options:
            [opts-or-input inputs])
 
          opts (assoc opts :inputs (count inputs))]
-     (avfilter/->AVMultiFilterMedia "hstack" opts :media-type/video inputs))))
+     {:type :avfilter
+      :filter-name "hstack"
+      :inputs inputs
+      :opts opts})))
 
 (defn vstack
   "vstack: Stack video inputs vertically.
@@ -48,7 +51,10 @@ Supported options:
            [opts-or-input inputs])
 
          opts (assoc opts :inputs (count inputs))]
-     (avfilter/->AVMultiFilterMedia "vstack" opts :media-type/video inputs))))
+     {:type :avfilter
+      :filter-name "vstack"
+      :inputs inputs
+      :opts opts})))
 
 (defn concat
   "concat: Concatenate audio and video streams. Medias must have the same
@@ -65,7 +71,8 @@ Supported options:
          (if (fm/media-source? opts-or-media)
            [nil (cons opts-or-media medias)]
            [opts-or-media medias])]
-     (avfilter/->AVConcatFilterMedia opts medias))))
+     {:type :concat
+      :inputs medias})))
 
 
 (defn trim+
@@ -137,4 +144,8 @@ Supported options:
 (defn swscale
   "Similar to scale, but also allows setting the output-format."
   [opts output-format media]
-  (avfilter/swscale opts output-format media))
+  {:type :avfilter
+   :filter-name "swscale"
+   :opts opts
+   :output-format output-format
+   :inputs [media]})
