@@ -358,11 +358,11 @@
                                                (when (not (zero? flags))
                                                  (doto encoder-context
                                                    (Map/.put :flags
-                                                         (int (bit-and
-                                                               (:capabilities output-codec)
-                                                               (bit-or (:flags encoder-context)
-                                                                       (:flags encoder-info))))))))
-
+                                                             (bit-and
+                                                              (:capabilities output-codec)
+                                                              (bit-or (:flags encoder-context)
+                                                                      (:flags encoder-info)))))))
+                                           
                                            err (raw/avcodec_open2 encoder-context output-codec nil)
                                            _ (when (neg? err)
                                                (throw (ex-info "Could not open codec"
