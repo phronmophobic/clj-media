@@ -2292,6 +2292,20 @@
   (filter-format-file-flow media #(not= :media-type/audio
                                         (:media-type %))))
 
+(defmethod ->file-flow :union [media]
+  (let [{:keys [inputs]} media
+
+        input-flows (into []
+                          (map ->file-flow)
+                          inputs)
+        g (apply merge-flows input-flows)
+        g (update g :format->coord
+                  (fn [fcs]
+                    (into (or fcs [])
+                          (mapcat :format->coord)
+                          input-flows)))]
+    g))
+
 (defn wrap-frame-source-input-filter [transform]
   (fn [state in msg]
     (let [[state outs] (transform state in msg)]
