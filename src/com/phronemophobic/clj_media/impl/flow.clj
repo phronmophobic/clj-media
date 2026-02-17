@@ -78,6 +78,12 @@
 ;;   relevant info! We should copy the codec parameters, time base, etc and pass that
 ;;   instead of the mutable AVStream.
 ;; - rescale ts when trimming
+;; - ->file-flow could probably be renamed to something more appropriate
+;; - ->file-flow format info isn't accurate. It probably can be reduced to just :container-type (eg. frame/packet) and :media-type. then it should be ok.      
+;; - frame-encoder-proc uses multiple, distinct encoders. I don't think they interact at all
+;;   frame-encoder-proc would be simpler if it only had a single input and outputs
+;;   frame-encoder-proc has to set stream_index because the output packets are all mixed,
+;;   but the stream_index can be set somewhere else if the output packets were sent separately.
 
 ;; - need to figure the right way to set pts
 ;; copying code from `filter.media` sets audio-pts, but not for video?
