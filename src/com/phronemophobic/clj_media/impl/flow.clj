@@ -2940,9 +2940,14 @@
                                   (dt-ffi/c->string (:name guessed-format)))
                              {:codec {:id 27} :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}
                              {:codec {:id (:video_codec guessed-format)}
-                              :flags (:flags guessed-format)})
+                              ;; I had trouble just using the suggested flags
+                              ;; examples explicitly check for this flag
+                              ;; but I'm not sure why
+                              :flags (bit-and (:flags guessed-format)
+                                              raw/AV_CODEC_FLAG_GLOBAL_HEADER)})
         audio-encoder-info {:codec {:id (:audio_codec guessed-format)}
-                            :flags (:flags guessed-format)}
+                            :flags (bit-and (:flags guessed-format)
+                                            raw/AV_CODEC_FLAG_GLOBAL_HEADER)}
         
         packet-flow (encode-all (->file-flow media)
                                 guessed-format
