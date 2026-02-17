@@ -633,7 +633,7 @@
                          "map of stream-id -> encoder-info. keys can be :codec and :flags."
                          ::fresh-packet-chan "Channel to acquire fresh packets."}
                 :ins (into {} ins)
-                :outs {:packet "Decoded Frames"
+                :outs {:packet "Encoded Frames"
                        ::recycle-frame "frame to recycle"}})
    :init (fn [{::keys [fresh-packet-chan] :as state}]
            (let [internal-in-chans (repeatedly (count ins) #(async/chan))
@@ -1109,7 +1109,7 @@
                           {::recycle-packet [packet]}))])))})
 
 (defn stream-media-type-filter 
-  "Filters a stream for packet of a specific media type."
+  "Filters a stream for packet of a specific media type. Recycles all others"
   []
   {:describe (fn []
                {:ins {:in ""}                
