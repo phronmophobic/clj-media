@@ -273,10 +273,10 @@
         (raw/avformat_free_context output-format-context)))))
 
 
-(defn stream->decoder-context [stream]
-  (let [codec-parameters (dt-ffi/ptr->struct 
-                          :AVCodecParameters
-                          (:codecpar stream))
+(defn stream->decoder-context [stream-info]
+  (let [{:keys [codec-parameters
+                time-base]} stream-info
+
         codec-id (:codec_id codec-parameters)
 
         decoder (raw/avcodec_find_decoder codec-id)
@@ -289,7 +289,7 @@
             (throw (ex-info "Could not allocate decoder"
                             {})))
         _ (doto decoder-context
-            (Map/.put :time_base (:time_base stream)))
+            (Map/.put :time_base time-base))
         
         _ (raw/avcodec_parameters_to_context decoder-context codec-parameters)
         err (raw/avcodec_open2 decoder-context decoder nil)
@@ -297,12 +297,12 @@
             (throw (Exception. "Could not open codec"
                                {:error-code err})))
         
-        format (merge {:time-base (:time_base stream)}
+        format (merge {:time-base time-base}
                       (av/codec-context-format decoder-context))
         
         time-base (condp = (:codec_type decoder-context)
                     raw/AVMEDIA_TYPE_AUDIO [1 (:sample-rate format)]
-                    raw/AVMEDIA_TYPE_VIDEO (let [tb (:time_base stream)]
+                    raw/AVMEDIA_TYPE_VIDEO (let [tb time-base]
                                          [(:num tb) (:den tb)]))
         media-type (condp = (:codec_type decoder-context)
                      raw/AVMEDIA_TYPE_AUDIO :media-type/audio
@@ -353,7 +353,7 @@
                                                          :AVCodec
                                                          (:codec encoder-context))
                                            _ (assert output-codec)
-                                           
+
                                            _ (when-let [flags (:flags encoder-info)]
                                                (when (not (zero? flags))
                                                  (doto encoder-context
@@ -436,6 +436,10 @@
                                                                                 (sort-by first)
                                                                                 (map second))))
                                    state (frame-encoder-init state (:input-formats state) encoders)]
+                               (doseq [{:keys [encoder-context input-format]} (:streams state)]
+                                 (when-let [frame-size-chan (:frame-size-chan input-format)]
+                                   (async/put! frame-size-chan (:frame_size encoder-context))))
+                               
                                (async/>!! out-chan {:type :stream-opened
                                                     :streams (:streams state)})
                                state)
@@ -712,8 +716,7 @@
                                         _ (when (nil? stream)
                                             (throw (Exception. "Could not create stream.")))
                                         
-                                        ;; todo make this more consistent
-                                        codec-parameters (or codec-parameters codecpar)
+                                        codec-parameters codec-parameters
                                         _ (when (nil? codec-parameters)
                                             (throw (Exception. "Could not create stream.")))
                                         err (raw/avcodec_parameters_copy (:codecpar stream)
@@ -1331,6 +1334,26 @@
            (let [state (-> state
                            (file-packet-flow-init-context (:filename state)))
                  streams (-> state :format-context :streams)
+                 stream-infos
+                 (into []
+                       (map (fn [stream]
+                              ;; make sure to send copies
+                              ;; everything is mutable!
+                              (let [codec-parameters (raw/avcodec_parameters_alloc)
+                                    codec-parameters-addr (-> codec-parameters
+                                                              dt-ffi/->pointer
+                                                              .address)
+                                    _ (tech.v3.resource/track codec-parameters
+                                                              {:dispose-fn (fn []
+                                                                             (println "freeing codec parameters")
+                                                                             (raw/avcodec_parameters_free
+                                                                              (dt-ffi/make-ptr :pointer codec-parameters-addr)))})
+                                    err (raw/avcodec_parameters_copy codec-parameters
+                                                                     (:codecpar stream))]
+                                {:codec-parameters codec-parameters
+                                 :time-base (:time_base stream)})))
+                       streams)
+
                  idx->time_base (into {}
                                       (map-indexed (fn [i stream]
                                                      [i (:time_base stream)]))
@@ -1339,7 +1362,7 @@
              [state
               {:packet 
                [{:type :stream-opened
-                 :streams streams}]}])))))}))
+                 :streams stream-infos}]}])))))}))
 
 (defn packet-frames-init [state msg]
   (let [;; todo: make this more consistent
@@ -1770,7 +1793,7 @@
 
 (defn add-frame-recycler 
   ([g]
-   (add-frame-recycler g (async/chan 12) 100))
+   (add-frame-recycler g (async/chan 12) 500))
   ([g fresh-frame-chan n]
    (add-recycler g 
                  (-> (frame-recycler)

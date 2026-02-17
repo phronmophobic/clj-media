@@ -10,6 +10,7 @@
             [tech.v3.datatype.ffi :as dt-ffi]
             [tech.v3.datatype.native-buffer :as native-buffer]
             [tech.v3.datatype.casting :as dt-casting]
+            [com.phronemophobic.clj-media.impl.flow :as-alias impl.flow]
             [com.phronemophobic.clj-media.impl.raw :as raw
              :refer :all]
             [clojure.pprint :refer [pprint]])
@@ -440,8 +441,7 @@
 
         input-format (:input-format state)
         _ (prn input-format output-format)
-        _ (assert (and input-format
-                       output-format))
+        
         err (swr_alloc_set_opts2 resample-context*
                                  (:ch-layout output-format)
                                  (:sample-format output-format)
@@ -471,8 +471,8 @@
 
         _ (assert (pos? bytes-per-sample))
         ;; should maybe check for AV_CODEC_CAP_VARIABLE_FRAME_SIZE?
-        output-frame-size (or (:frame-size output-format)
-                              (int 1024))]
+        output-frame-size (:frame-size output-format)
+        _ (assert output-frame-size)]
     (assoc state
            :output-frame-size output-frame-size
            :sample-offset-multiplier sample-offset-multiplier
@@ -486,13 +486,8 @@
                 sample-rate]} output-format
 
         ch-layout (:ch-layout output-format)
-        ;; create our own copy since original copy may change :(
-        #_(av_channel_layout_copy ch-layout
-                              (:ch-layout output-format))
-        #_(dt-struct/new-struct :AVChannelLayout {:container-type :native-heap})
-        
-        output-frame-size (or (:frame-size output-format)
-                              (int 1024))
+        output-frame-size (:frame-size output-format)
+                              
         frame (doto frame
                 ;; set to output-frame size
                 ;; for av_frame_get_buffer
@@ -504,9 +499,11 @@
          (zero? (av_channel_layout_copy
                  (:ch_layout frame)
                  ch-layout)))
-        (assert
-         (>= (av_frame_get_buffer frame 0)
-             0))
+        (let [err (av_frame_get_buffer frame 0)]
+          (when (neg? err)
+            (throw (ex-info "Could not open codec"
+                            {:error-code err
+                             :error-msg (av/error->str err)}))))
         ;; set back to zero now that we've
         ;; alloced the frame's buffer
         ;; we'll be using nb_samples to keep
@@ -535,9 +532,25 @@
          (do
            (case (:type msg)
              :stream-opened
-             (let [state (assoc state :input-format (:format msg))]
-               (async/>!! out-frame-chan {:type :stream-opened
-                                          :format output-format})
+             (let [state (assoc state :input-format (:format msg))
+                   
+                   frame-size-chan (async/chan 1)
+                   ;; todo: this is ugly
+                   ;; afaict, there's no way to know the or set the frame size
+                   ;; ahead of time. you have to wait for the encoder to open.
+                   _ (async/>!! out-frame-chan {:type :stream-opened
+                                                :format (-> (merge (:format msg)
+                                                                   output-format)
+                                                            (assoc :frame-size-chan frame-size-chan))})
+                   
+                   frame-size (async/<!! frame-size-chan)
+                   _ (prn "received the frame size" frame-size)
+                   output-format (-> (merge (:format msg)
+                                            output-format)
+                                     (assoc :frame-size frame-size))
+
+                   state (assoc state :output-format output-format)]
+               
                (recur (resample-init state
                                      output-format)
                       output-frame))
@@ -547,20 +560,12 @@
                    input-frame (:frame msg)
                    output-frame (or output-frame
                                     (resample-init-frame (async/<!! fresh-frame-chan)
-                                                         output-format))
+                                                         (:output-format state)))
                    num-samples (:nb_samples input-frame)
                    current-samples (:nb_samples output-frame)
                    samples-wanted (- (:output-frame-size state)
                                      current-samples)
                    
-                   ;; data-ptr (into-array Pointer
-                   ;;                      (eduction
-                   ;;                       (map (fn [p]
-                   ;;                              (when p
-                   ;;                                (.share (.getPointer p)
-                   ;;                                        (* sample-offset-multiplier
-                   ;;                                           current-samples)))))
-                   ;;                       (:data output-frame)))
                    data-ptr (dt/make-container :native-heap :int64
                                                (into []
                                                      (map (fn [p]
@@ -596,7 +601,7 @@
                      (let [output-frame (or output-frame 
                                             (resample-init-frame
                                              (async/<!! fresh-frame-chan)
-                                             output-format))
+                                             (:output-format state)))
                            current-samples (:nb_samples output-frame)
                            samples-wanted (- (:output-frame-size state)
                                              current-samples)
@@ -650,15 +655,20 @@
        (println "exiting resample audio.")))))
 
 (defn resample-audio-proc
+  "Resamples audio while also ensuring all frames except the last are the right frame size.
+  
+  Unfortunately, this proc is coupled to `frame-encoder-proc` right now so that 
+  the right frame size can be used."
   []
   {:describe (fn []
                {
                 :params {:output-format "The output format"
-                         :fresh-frame-chan "Channel to get fresh frames from."}
+                         ::impl.flow/fresh-frame-chan "Channel to get fresh frames from."}
                 :ins {:in "frames to resample"}
                 :outs {:out "resampled frames"
-                       :recycle-frame "Frames to recycle"}})
-   :init (fn [{:keys [fresh-frame-chan output-format] :as state}]
+                       ::impl.flow/recycle-frame "Frames to recycle"}})
+   :init (fn [{:keys [output-format] :as state
+               ::impl.flow/keys [fresh-frame-chan]}]
            (let [internal-input-frame-chan (async/chan)
                  ready-for-frame-chan (async/chan 1)
                  internal-recycle-chan (async/chan 1)
@@ -691,7 +701,7 @@
             {:internal/input-frame [msg]}]
        :internal/ready-for-frame [(dissoc state ::flow/input-filter)]
        :internal/recycle [state
-                          {:recycle-frame [msg]}]
+                          {::impl.flow/recycle-frame [msg]}]
        :internal/output-frame [state {:out [msg]}]))})
 
 
