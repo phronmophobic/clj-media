@@ -1611,9 +1611,10 @@
                   (name fn-name))
          nil ~@inputs))
        ([~opts ~@inputs]
-        ~(if (= 1 (count inputs))
-           `(->AVFilterMedia ~filter-name ~opts## ~media-type ~(first inputs))
-           `(->AVMultiFilterMedia ~filter-name ~opts## ~media-type ~inputs))))))
+        {:type :avfilter
+         :filter-name ~filter-name
+         :opts ~opts##
+         :inputs ~inputs}))))
 
 
 (defn supported-filter-type? [filter-info]
