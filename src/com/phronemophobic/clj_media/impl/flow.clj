@@ -2500,10 +2500,14 @@
                            (let [{:keys [channel-layout
                                          sample-format
                                          sample-rate]} format]
-                             {:ch-layout (media.datafy/str->ch-layout channel-layout)
-                              :sample-format (media.datafy/kw->sample-format sample-format)
-                              :sample-rate sample-rate
-                              :media-type :media-type/audio}))
+                             (merge
+                              {:media-type :media-type/audio}
+                              (when channel-layout
+                                {:ch-layout (media.datafy/str->ch-layout channel-layout)})
+                              (when sample-format
+                                {:sample-format (media.datafy/kw->sample-format sample-format)})
+                              (when sample-rate
+                                {:sample-rate sample-rate}))))
                         ;; else assume output format of first input
                         (let [first-flow (first input-flows)
                               format (some (fn [[format _]]
