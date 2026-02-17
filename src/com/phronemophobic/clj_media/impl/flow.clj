@@ -85,6 +85,8 @@
 ;;   frame-encoder-proc has to set stream_index because the output packets are all mixed,
 ;;   but the stream_index can be set somewhere else if the output packets were sent separately.
 
+;; format->coord is a bit dumb. Juse use a vector of maps with `:out-coord` and `:format`.
+
 ;; - need to figure the right way to set pts
 ;; copying code from `filter.media` sets audio-pts, but not for video?
 ;; but for video, the pts is rescaled.
@@ -2243,7 +2245,7 @@
            :conns [[(-> packet-flow :out-coord)
                     [packet-splitter-pid :in]]]
            
-           :format->coord (into {}
+           :format->coord (into []
                                 (map-indexed (fn [i stream]
                                                [(assoc stream :container-type :packet)
                                                 [packet-splitter-pid (outkw i)]]))
@@ -2264,7 +2266,7 @@
                                 :frame [coord
                                         [::frame-recycler ::recycle-stream]]))))
                     (:format->coord g))
-        format->coord (into {}
+        format->coord (into []
                             (filter (fn [[format coord]]
                                       (pred format)))
                             (:format->coord g))
@@ -2463,8 +2465,9 @@
                                              flow/process)
                                    :args {:format format
                                           :frames frames}}}
-           :format->coord {{:container-type :frame
-                            :media-type (:media-type format)} [frame-flow-pid :out]}}]
+           :format->coord [
+                           [{:container-type :frame
+                            :media-type (:media-type format)} [frame-flow-pid :out]]]}]
     g))
 
 (def avfilter-media-type 
@@ -2490,7 +2493,7 @@
                             (filter matches-media)
                             (:format->coord g))
         g (assoc g
-                 :format->coord (into {}
+                 :format->coord (into []
                                       (remove matches-media)
                                       (:format->coord g)))
         
@@ -2503,9 +2506,10 @@
                                                 [coord [decoder-pid :packet]]]}
                           g (merge-flows decoder-flow
                                          g)
-                          g (assoc-in g
-                                      [:format->coord (assoc format :container-type :frame)]
-                                      [decoder-pid :frame])]
+                          g (update g
+                                    :format->coord
+                                    conj [(assoc format :container-type :frame)
+                                          [decoder-pid :frame]])]
                       g))
                   g
                   format-coords)]
@@ -2602,7 +2606,8 @@
         
 
         output-format (assoc output-format :container-type :frame)
-        format->coord (into {output-format [filter-pid :out]}
+        format->coord (into [
+                             [output-format [filter-pid :out]]]
                             ;; pass on any coords from the first input
                             ;; that don't match the filter media type  
                             (filter (fn [[format coord]]
@@ -2924,8 +2929,9 @@
                                          encoder-flow
                                          {:conns [
                                                   [coord (:in-coord encoder-flow)]]})]
-                      
-                      (assoc-in g [:format->coord format] (:out-coord encoder-flow))))
+                      (update g :format->coord
+                              conj
+                              [format (:out-coord encoder-flow)])))
                   (dissoc g :format->coord)
                   (:format->coord g))]
     
@@ -2963,9 +2969,11 @@
         write-file-pid (gen-pid "write-file")
         merge-packets-pid (gen-pid "merge-packets")
         merge-packet-in-conns (into []
-                                    (map-indexed (fn [i in-coord]
-                                                   [in-coord [merge-packets-pid (inkw i)]]))
-                                    (vals (:format->coord packet-flow)))
+                                    (comp
+                                     (map second)
+                                     (map-indexed (fn [i in-coord]
+                                                    [in-coord [merge-packets-pid (inkw i)]])))
+                                    (:format->coord packet-flow))
 
         g {:procs {write-file-pid {:proc (-> (write-file-proc)
                                              flow/map->step
