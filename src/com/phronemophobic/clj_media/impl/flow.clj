@@ -2667,6 +2667,220 @@
                           :packet (doto (:packet msg)
                                     (Map/.put :stream_index stream-index))}]}])))}))
 
+(defn guess-frame-format [codec-id]
+  (let [codec-struct (dt-ffi/ptr->struct
+                           :AVCodec
+                           (raw/avcodec_find_encoder codec-id))
+        codec (-> codec-struct
+                  (media.datafy/codec->map)) ]
+    (case (:media-type codec)
+      :media-type/audio
+      
+      (merge
+       (let [sample-rate (first (:sample-rates codec))]
+         {:sample-rate (or sample-rate 44100)})
+       (when-let [sample-format (first (:sample-formats codec))]
+         {:sample-format sample-format})
+       (let [channel-layout (first (:channel-layouts codec))]
+         {:channel-layout (or (:name channel-layout)
+                              "mono")})
+       {:media-type :media-type/audio
+        :codec {:id codec-id}})
+      
+      :media-type/video
+      (merge 
+       (when-let [pix-fmt (first (:pixel-formats codec))]
+         {:pixel-format pix-fmt})
+       {:media-type :media-type/video
+        :codec {:id codec-id}}))))
+
+;; This is a fairly naive approach. However, it's not totally clear what the recommended approach is. This needs more research.
+(defn output-format-supported?
+  [codec-map output-format]
+  (case (:media-type codec-map)
+    :media-type/audio
+    
+    (let [{:keys [sample-format sample-rate frame-size ch-layout]} output-format
+          {:keys [sample-formats sample-rates channel-layouts ]} codec-map]
+      
+      (and (or (not sample-formats)
+               (some #{(media.datafy/sample-format->kw sample-format)}
+                     sample-formats))
+           (or (not sample-rates)
+               (not sample-rate)
+               (some #{sample-rate} sample-rates))
+           ;; todo: check layouts
+           )
+      )
+    
+    :media-type/video
+    (let [{:keys [pixel-format]} output-format
+          {:keys [pixel-formats]} codec-map]
+      (or (not pixel-formats)
+          (some #{(media.datafy/pixel-format->kw pixel-format)} 
+                pixel-formats)))))
+
+(defn auto-encode-frame
+  "Returns a flow with `:in-coord` and `:out-coord.
+  
+  `:in-coord` is expecting a stream of frames .
+  `:out-coord` will produce a stream of packets compatible with `avformat`, reencoding if necessary.
+  "
+  [avformat media-type encoder-info]
+  (let [
+        
+        router-pid (gen-pid "router")
+        transcode-pid (gen-pid "transcode")
+        encoder-pid (gen-pid "encoder")
+        resampler-pid (gen-pid (if (= :media-type/audio
+                                      media-type)
+                                 "resampler"
+                                 "dummy"))
+        
+        codec-map (-> (dt-ffi/ptr->struct
+                       :AVCodec
+                       (raw/avcodec_find_encoder (-> encoder-info
+                                                     :codec :id)))
+                      (media.datafy/codec->map))
+        
+        output-format (guess-frame-format (-> encoder-info
+                                              :codec :id))
+        g {:procs {router-pid {:proc (flow/process
+                                      (flow/map->step
+                                       {:describe (fn []
+                                                    {:ins {:in ""}
+                                                     :outs {:passthru ""
+                                                            :reencode ""}})
+                                        :transform
+                                        (fn [state in msg]
+                                          (if-let [out (:out state)]
+                                            [state {out [msg]}]
+                                            (if (not= :stream-opened (:type msg))
+                                              (throw (ex-info "Expected stream open as first message"
+                                                              {:msg msg}))
+                                              (let [format (:format msg)
+                                                    _ (prn "chekcing supported format"
+                                                           format
+                                                           codec-map)
+                                                    out (if (output-format-supported? codec-map format)
+                                                          :passthru
+                                                          :reencode)
+                                                    state (assoc state :out out)]
+                                                (prn "routing frame: " out)
+                                                [state {out [msg]}]))))}))}
+                   
+                   transcode-pid {:proc (-> (avfilter/filter-proc [[:in ""]])
+                                            flow/map->step
+                                            flow/process)
+                                  :args {:filter-name (case media-type
+                                                        :media-type/audio "anull"
+                                                        :media-type/video "null")
+                                         :output-format 
+                                         (media.datafy/map->format output-format)}}
+                   
+                   resampler-pid (if (= :media-type/audio media-type)
+                                   {:proc (-> (audio/resample-audio-proc)
+                                              flow/map->step
+                                              flow/process)}
+                                   {:proc (flow/process 
+                                           (flow/lift1->step identity))})
+                   
+                   encoder-pid {:proc (-> (frame-encoder-proc [[:in ""]])
+                                          flow/map->step
+                                          flow/process)
+                                :args {:encoders {:in encoder-info}}}}
+           :in-coord [router-pid :in]
+           :out-coord [encoder-pid :packet]
+           :conns [
+                   
+                   [[router-pid :passthru] [resampler-pid :in]]
+
+                   [[router-pid :reencode] [transcode-pid :in]]
+                   [[transcode-pid :out] [resampler-pid :in]]
+                   
+                   [[resampler-pid :out] [encoder-pid :in]]]}]
+    g))
+
+(defn auto-encode-packet
+  "Returns a flow with `:in-coord` and `:out-coord.
+  
+  `:in-coord` is expecting a stream of packets.
+  `:out-coord` will produce a stream of packets compatible with `avformat`, reencoding if necessary.
+  "
+  [avformat media-type encoder-info]
+  (let [
+        
+        router-pid (gen-pid "router")
+        decoder-pid (gen-pid "decoder")
+        ;; transcode-pid (gen-pid "transcode")
+        ;; encoder-pid (gen-pid "encoder")
+        
+        auto-encode-frame-flow (auto-encode-frame avformat media-type encoder-info)
+        output-pid (gen-pid "output")
+        
+        output-format (guess-frame-format (-> encoder-info
+                                              :codec :id))
+        _ (prn output-format)
+        g (merge-flows
+           auto-encode-frame-flow
+           {:procs {router-pid {:proc (flow/process
+                                       (flow/map->step
+                                        {:describe (fn []
+                                                     {:ins {:in ""}
+                                                      :outs {:passthru ""
+                                                             :reencode ""}})
+                                         :transform
+                                         (fn [state in msg]
+                                           (if-let [out (:out state)]
+                                             [state {out [msg]}]
+                                             (if (not= :stream-opened (:type msg))
+                                               (throw (ex-info "Expected stream open as first message"
+                                                               {:msg msg}))
+                                               (let [streams (:streams msg)
+                                                     _ (when (not= 1 (count streams))
+                                                         (throw (ex-info "Only expected a single stream"
+                                                                         {:msg msg})))
+                                                     {:keys [codec-parameters]} (first streams)
+                                                     
+                                                     out (if (= 1
+                                                                (raw/avformat_query_codec avformat (:codec_id codec-parameters)
+                                                                                          raw/FF_COMPLIANCE_NORMAL))
+                                                           :passthru
+                                                           :reencode)
+                                                     state (assoc state :out out)]
+                                                 (prn "routing packet: " out)
+                                                 [state {out [msg]}]))))}))}
+                    decoder-pid {:proc (-> (packet->frames)
+                                           flow/map->step
+                                           flow/process)}
+                    
+                    ;; transcode-pid {:proc (-> (avfilter/filter-proc [[:in ""]])
+                    ;;                          flow/map->step
+                    ;;                          flow/process)
+                    ;;                :args {:filter-name (case media-type
+                    ;;                                      :media-type/audio "anull"
+                    ;;                                      :media-type/video "null")
+                    ;;                       :output-format 
+                    ;;                       (media.datafy/map->format output-format)}}
+                    
+                    ;; encoder-pid {:proc (-> (frame-encoder-proc [[:in ""]])
+                    ;;                        flow/map->step
+                    ;;                        flow/process)
+                    ;;              :args {:encoders {:in encoder-info}}}
+                    
+                    output-pid {:proc (flow/process
+                                       (flow/lift1->step identity))}}
+            :in-coord [router-pid :in]
+            :out-coord [output-pid :out]
+            :conns [
+                    
+                    [[router-pid :passthru] [output-pid :in]]
+                    [[router-pid :reencode] [decoder-pid :packet]]
+                    
+                    [[decoder-pid :frame] (:in-coord auto-encode-frame-flow)]
+                    [(:out-coord auto-encode-frame-flow) [output-pid :in]]]})]
+    g))
+
 (defn encode-all
   "Given a flow with :format->coord, encodes all coords
   with `:container-type` of :frame.
@@ -2679,35 +2893,36 @@
    :media-type/video {:codec {:id 27}
                       :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}}
   "
-  [g encoders]
-  (let [frame-format-coord? (fn [[format coord]]
-                              (= :frame (:container-type format)))
-        frame-format-coords (into []
-                                  (filter frame-format-coord?)
-                                  (:format->coord g))
-        g (assoc g
-                 :format->coord (into {}
-                                      (remove frame-format-coord?)
-                                      (:format->coord g)))
+  [g avformat encoders]
+  (let [
+        ;; frame-format-coord? (fn [[format coord]]
+        ;;                       (= :frame (:container-type format)))
+        ;; frame-format-coords (into []
+        ;;                           (filter frame-format-coord?)
+        ;;                           (:format->coord g))
+        ;; g (assoc g
+        ;;          :format->coord (into {}
+        ;;                               (remove frame-format-coord?)
+        ;;                               (:format->coord g)))
         
         g (reduce (fn [g [format coord]]
-                    (let [encoder-pid (gen-pid "encoder")
+                    
+                    (let [auto-encoder (case (:container-type format)
+                                         :packet auto-encode-packet
+                                         :frame auto-encode-frame)
                           
-                          encoder-info (get encoders (:media-type format))
-                          encoder-flow {:procs {encoder-pid {:proc (-> (frame-encoder-proc [[:in ""]])
-                                                                      flow/map->step
-                                                                      flow/process)
-                                                             :args {:encoders {:in encoder-info}}}}
-                                        :conns [
-                                                [coord [encoder-pid :in]]]}
-                          g (merge-flows encoder-flow
-                                         g)
-                          g (assoc-in g
-                                      [:format->coord (assoc format :container-type :packet)]
-                                      [encoder-pid :packet])]
-                      g))
-                  g
-                  frame-format-coords)]
+                          media-type (:media-type format)
+                            
+                          encoder-flow (auto-encoder avformat media-type (get encoders media-type))
+                          g (merge-flows g
+                                         encoder-flow
+                                         {:conns [
+                                                  [coord (:in-coord encoder-flow)]]})]
+                      
+                      (assoc-in g [:format->coord format] (:out-coord encoder-flow))))
+                  (dissoc g :format->coord)
+                  (:format->coord g))]
+    
     g))
 
 (defn write-file-flow [media file-info]
@@ -2730,9 +2945,9 @@
                             :flags (:flags guessed-format)}
         
         packet-flow (encode-all (->file-flow media)
+                                guessed-format
                                 {:media-type/audio audio-encoder-info
                                  :media-type/video video-encoder-info})
-        
         
         write-file-pid (gen-pid "write-file")
         merge-packets-pid (gen-pid "merge-packets")
@@ -2789,10 +3004,11 @@
     nil))
 
 
-(defn test-write-file-flow [media file-info]
+(defn test-write-file-flow [media filename]
   (let [done-chan (async/chan 1)
+        file-info {:filename filename }
         g (write-file-flow media file-info)
-        
+        _ (tap> g)
         report-done-pid (gen-pid "report-done")
         g (merge-flows 
            g
