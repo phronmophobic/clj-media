@@ -252,21 +252,21 @@
   (chunk-define)
 
 (let [to-augment (into []
-                         (filter (fn [{:keys [function/ret]}]
-                                   (and (vector? ret)
-                                        (= :coffi.mem/pointer (first ret))
-                                        (keyword? (second ret))
-                                        (= "clong" (namespace (second ret)))
-                                        )))
-                         
-                         (:functions av-api))
-        interns (ns-interns *ns*)]
-    (doseq [{:keys [id function/ret]} to-augment]
-      (when-let [v (get interns (-> id name symbol))]
-        (let [dtype (-> (second ret) name keyword)]
-          (alter-var-root v (fn [f]
-                              (fn [& args]
-                                (when-let [result (apply f args)]
-                                  (dt-ffi/ptr->struct dtype result)))))))))
+                       (filter (fn [{:keys [function/ret]}]
+                                 (and (vector? ret)
+                                      (= :coffi.mem/pointer (first ret))
+                                      (keyword? (second ret))
+                                      (= "clong" (namespace (second ret)))
+                                      )))
+                       
+                       (:functions av-api))
+      interns (ns-interns *ns*)]
+  (doseq [{:keys [id function/ret]} to-augment]
+    (when-let [v (get interns (-> id name symbol))]
+      (let [dtype (-> (second ret) name keyword)]
+        (alter-var-root v (fn [f]
+                            (fn [& args]
+                              (when-let [result (apply f args)]
+                                (dt-ffi/ptr->struct dtype result)))))))))
 
 (gen.dtype-next/def-enums av-api)
