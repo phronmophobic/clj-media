@@ -25,7 +25,7 @@ Supported options:
   ([opts-or-input & inputs]
 
    (let [[opts inputs]
-         (if (fm/media-source? opts-or-input)
+         (if (:type opts-or-input)
            [nil (cons opts-or-input inputs)]
            [opts-or-input inputs])
 
@@ -46,7 +46,7 @@ Supported options:
   ([opts-or-input & inputs]
 
    (let [[opts inputs]
-         (if (fm/media-source? opts-or-input)
+         (if (:type opts-or-input)
            [nil (cons opts-or-input inputs)]
            [opts-or-input inputs])
 
@@ -68,7 +68,7 @@ Supported options:
 "
   ([opts-or-media & medias]
    (let [[opts medias]
-         (if (fm/media-source? opts-or-media)
+         (if (:type opts-or-media)
            [nil (cons opts-or-media medias)]
            [opts-or-media medias])]
      {:type :concat
