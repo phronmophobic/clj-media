@@ -971,7 +971,7 @@
                 [_ {:out [v]}])})
 
 
-(defn concat-frames-proc
+(defn concat-proc
   "`ins` should be a vector [port, docstring]. All inputs should share the same format."
   [ins]
   {:describe (fn []
@@ -986,6 +986,7 @@
    :transform
    (fn [state in msg]
      (case (:type msg)
+       ;; todo: check that formats of all ins match
        :stream-opened
        [state
         (when (= in (-> ins first first))
@@ -1002,6 +1003,7 @@
             {:out [{:type :stream-closed}]}]))
        
        ;; todo update pts?
+       :new-packet [state {:out [msg]}]
        :new-frame [state {:out [msg]}]))})
 
 (defn stream-index-filter []
@@ -1956,7 +1958,7 @@
                                 [(inkw i) "useless docstring"]))
                          (range (count input-flows)))
 
-        proc {:proc (-> (concat-frames-proc concat-ins)
+        proc {:proc (-> (concat-proc concat-ins)
                         flow/map->step
                         flow/process)}
         
