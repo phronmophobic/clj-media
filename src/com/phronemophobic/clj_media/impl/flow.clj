@@ -1243,7 +1243,7 @@
                           :start-timestamp "start producing packets from this ts"
                           ;; since packets aren't necessarily produced in pts order
                           ;; :end-timestamp doesn't make sense.
-                          ;;:end-timestamp "stop producing packets at this ts"
+                          :end-timestamp "stop producing packets at this ts."
                           }
                  :outs {:packet "Packets from file."}})
     :init (fn [{::keys [fresh-packet-chan] :as state}]
@@ -1279,11 +1279,42 @@
              
              (cond
                (zero? err) (let [idx->time_base (:idx->time_base state)
-                                 tb (idx->time_base (:stream_index packet))]
-                             (assert tb)
-                             (Map/.put packet :time_base tb)
-                             [state {:packet [{:type :new-packet
-                                               :packet packet}]}])
+                                 tb (idx->time_base (:stream_index packet))
+                                 _ (Map/.put packet :time_base tb)
+
+                                 end-timestamp (:end-timestamp state)
+                                 valid? (if end-timestamp
+                                          (let [packet-pts (/ (* (:pts packet) (:num tb))
+                                                              (:den tb))]
+                                            (< packet-pts end-timestamp))
+                                          ;; else
+                                          true)
+                                 eof? (if valid?
+                                        false
+                                        (when end-timestamp
+                                          (let [packet-dts (/ (* (:dts packet) (:num tb))
+                                                              (:den tb))]
+                                            (> packet-dts end-timestamp))))
+
+                                 outs (cond 
+                                        valid?
+                                        {:packet [{:type :new-packet
+                                                   :packet packet}]}
+                                        
+                                        eof? {:packet [{:type :stream-closed}]}
+                                        
+                                        :else nil)
+                                 state (if eof?
+                                         (do
+                                           (prn "sending packet eof!")
+                                           (-> state
+                                                (assoc ::produce false)
+                                                (file-packet-flow-close)
+                                                (assoc :eof? true)))
+                                         state)]
+                             (when (not valid?)
+                               (raw/av_packet_unref packet))
+                             [state outs])
                (av/eof? err) 
                (do
                  (prn "sending packet eof!")
@@ -1935,7 +1966,9 @@
                                       (merge
                                        {:filename (java.io.File/.getPath file)}
                                        (when-let [start-timestamp (:start-timestamp media)]
-                                         {:start-timestamp start-timestamp}))}}
+                                         {:start-timestamp start-timestamp})
+                                       (when-let [end-timestamp (:end-timestamp media)]
+                                         {:end-timestamp end-timestamp}))}}
            :out-coord [media-packets-pid :packet]}]
     g))
 
