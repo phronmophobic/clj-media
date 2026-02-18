@@ -12,7 +12,8 @@
    [clojure.string :as str]
    [clojure.java.io :as io]
    [com.phronemophobic.clj-media.impl.raw :as raw]
-   [com.phronemophobic.clj-media.impl.av :as av]))
+   [com.phronemophobic.clj-media.impl.av :as av]
+   [com.phronemophobic.clj-media.impl.flow :as impl.flow]))
 
 
 (def sample-formats
