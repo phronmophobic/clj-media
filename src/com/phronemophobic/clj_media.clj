@@ -1,7 +1,5 @@
 (ns com.phronemophobic.clj-media
   (:require
-   [com.phronemophobic.clj-media.impl.filter.media
-    :as fm]
    [com.phronemophobic.clj-media.model :as mm]
    [com.phronemophobic.clj-media.impl.datafy
     :as datafy-media]

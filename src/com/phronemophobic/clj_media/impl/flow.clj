@@ -4,7 +4,6 @@
             [clojure.core.async.flow.spi :as flow.spi]
             [clojure.core.async :as async]
             [clojure.java.io :as io]
-            [com.phronemophobic.clj-media.impl.filter.media :as fm]
             [com.phronemophobic.clj-media.impl.av :as av]
             [com.phronemophobic.clj-media.impl.raw :as raw]
             [com.phronemophobic.clj-media.impl.audio :as audio]

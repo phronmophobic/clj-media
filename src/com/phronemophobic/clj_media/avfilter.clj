@@ -6,8 +6,6 @@
                             reverse
                             concat])
     (:require
-     [com.phronemophobic.clj-media.impl.filter.media
-             :as fm]
      [com.phronemophobic.clj-media.impl.filter.avfilter
       :as avfilter]))
 
