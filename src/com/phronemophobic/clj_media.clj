@@ -91,42 +91,53 @@
   ([media dest]
    (write! media dest nil))
   ([media dest opts]
-   (fm/write! media dest opts)))
+   (impl.flow/write-file! media 
+                          {:filename dest})))
+
 
 (defn filter-video
   "Returns media with only video streams from `media`."
   [media]
-  (fm/filter-video media))
+  {:type :filter-video
+   :media media})
 
 (defn remove-video
   "Returns media without video streams from `media`."
   [media]
-  (fm/filter-audio media))
+  {:type :remove-video
+   :media media})
 
 (defn filter-audio
   "Returns media with only audio streams from `media`."
   [media]
-  (fm/filter-audio media))
+  {:type :filter-audio
+   :media media})
 
 (defn remove-audio
   "Returns media without audio streams from `media`."
   [media]
-  (fm/filter-video media))
+  {:type :remove-audio
+   :media media})
 
 (defn filter-media-types
   "Returns media with only types in `media-types`."
   [media-types media]
-  (fm/filter-media-types media-types media))
+  {:type :filter-media-types
+   :media-types media-types
+   :media media})
 
 (defn remove-media-types
   "Returns media without any types in `media-types`."
   [media-types media]
-  (fm/remove-media-types media-types media))
+  {:type :remove-media-types
+   :media-types media-types
+   :media media})
 
 (defn union
   "Returns media that combines all the streams from `medias`."
   [& medias]
-  (apply fm/union medias))
+  {:type :union
+   :inputs medias})
 
 (defn file
   "Returns media with the contents of the file `f`.
@@ -134,9 +145,8 @@
   `f` should be a value that can be coerced to a file via
       clojure.java.io/file."
   [f]
-  (fm/->MediaFile
-   (.getCanonicalPath (io/as-file f))))
-
+  {:file f
+   :type :file})
 
 
 (defn probe
