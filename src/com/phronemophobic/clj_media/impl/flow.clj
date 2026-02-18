@@ -2321,6 +2321,67 @@
                           input-flows)))]
     g))
 
+(defmethod ->file-flow :concat [media]
+  (let [{:keys [inputs]} media
+
+        input-flows (into []
+                          (map ->file-flow)
+                          inputs)
+
+        ;; create a concat-proc for each kind of input
+        ->group (fn [format]
+                  (select-keys format [:container-type :media-type]))
+        groups (into #{}
+                     (comp (mapcat :format->coord)
+                           (map first)
+                           (map ->group))
+                     input-flows)
+        group->concat-pid (into {}
+                                (map (fn [group]
+                                       [group (gen-pid "concat")]))
+                                groups)
+        
+        ;; create a mapping of
+        ;; group -> inputs coords
+        conn-map (transduce
+                  (mapcat :format->coord)
+                  (completing
+                   (fn [conn-map [format coord]]
+                     (let [group (->group format)
+                           conn-map (update conn-map group
+                                            (fnil conj [])
+                                            coord)]
+                       conn-map)))
+                  {}
+                  input-flows)
+        
+        g (apply merge-flows input-flows)
+        g (reduce
+           (fn [g [group coords]]
+             (let [concat-ins (into []
+                                    (map (fn [i]
+                                           [(inkw i) "useless docstring"]))
+                                    (range (count coords)))
+                   concat-pid (get group->concat-pid group)
+                   
+                   concat-flow {:procs {concat-pid {:proc 
+                                                    (-> (concat-proc concat-ins)
+                                                        flow/map->step
+                                                        flow/process)}}
+                                :conns (into []
+                                             (map-indexed (fn [i coord]
+                                                            [coord [concat-pid (inkw i)]]))
+                                             coords)}]
+               (merge-flows g concat-flow)))
+           g
+           conn-map)
+        g (assoc g :format->coord
+                 (into []
+                       (map (fn [[group concat-pid]]
+                              [group [concat-pid :out]]))
+                       group->concat-pid))]
+    g))
+
 (defn wrap-frame-source-input-filter [transform]
   (fn [state in msg]
     (let [[state outs] (transform state in msg)]
