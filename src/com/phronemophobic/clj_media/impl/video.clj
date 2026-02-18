@@ -31,7 +31,7 @@
 
 
 
-(defn transcode-frame3 [{:keys [width height pixel-format time-base]}
+#_(defn transcode-frame3 [{:keys [width height pixel-format time-base]}
                         output-pix-fmt]
   (fn [rf]
     (let [filter-graph (avfilter_graph_alloc)
@@ -114,7 +114,7 @@
                          :type :transcode-error}))))))))
   )
 
-(defn transcode-frame [decoder-context pix-fmt]
+#_(defn transcode-frame [decoder-context pix-fmt]
   (fn [rf]
     (let [frame (av_frame_alloc)
 
@@ -257,19 +257,22 @@
     img))
 
 
-(def  SWS_FAST_BILINEAR     1)
-(def  SWS_BILINEAR          2)
-(def  SWS_BICUBIC           4)
-(def  SWS_X                 8)
-(def  SWS_POINT          0x10)
-(def  SWS_AREA           0x20)
-(def  SWS_BICUBLIN       0x40)
-(def  SWS_GAUSS          0x80)
-(def  SWS_SINC          0x100)
-(def  SWS_LANCZOS       0x200)
-(def  SWS_SPLINE        0x400)
+;; The following appears to be available via 
+;; the "scale" avfilter
 
-(defn swscale
+#_(def  SWS_FAST_BILINEAR     1)
+#_(def  SWS_BILINEAR          2)
+#_(def  SWS_BICUBIC           4)
+#_(def  SWS_X                 8)
+#_(def  SWS_POINT          0x10)
+#_(def  SWS_AREA           0x20)
+#_(def  SWS_BICUBLIN       0x40)
+#_(def  SWS_GAUSS          0x80)
+#_(def  SWS_SINC          0x100)
+#_(def  SWS_LANCZOS       0x200)
+#_(def  SWS_SPLINE        0x400)
+
+#_(defn swscale
   ([input-format output-format]
    (swscale input-format output-format nil))
   ([input-format output-format opts]
