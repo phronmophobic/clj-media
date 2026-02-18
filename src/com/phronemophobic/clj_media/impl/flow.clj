@@ -435,7 +435,9 @@
                (let [input-format (:format msg)
                      state (assoc-in state [:input-formats (port->idx port)] input-format)
                      
-                     state (assoc state :last-pts 0)
+                     state (assoc state
+                                  :last-pts 0
+                                  :max-pts 0)
                      state (if (= (count (:input-formats state))
                                   (count in-chans))
                              
@@ -475,6 +477,17 @@
                                    _ (Map/.put (:time_base input-frame) :num 1)
                                    _ (Map/.put (:time_base input-frame) :den (:sample_rate input-frame))
                                    state (assoc state :last-pts pts)]
+                               state)
+                             
+                             :media-type/video
+                             (let [last-pts (:last-pts state)
+                                   state (assoc state :last-pts (:pts input-frame))
+                                   pts (+ (:max-pts state)
+                                          (max 1 (- (:pts input-frame)
+                                                    last-pts)))
+                                   
+                                   _ (Map/.put input-frame :pts pts)
+                                   state (update state :max-pts max pts)]
                                state)
                              
                              ;;else
