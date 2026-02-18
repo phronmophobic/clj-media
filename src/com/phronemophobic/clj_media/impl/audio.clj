@@ -260,7 +260,7 @@
              
              buf)))))
 
-(defn resample2 [input-format output-format]
+#_(defn resample2 [input-format output-format]
   (let [resample-ctx* (dt-ffi/make-ptr :pointer 0 )
         err (swr_alloc_set_opts2 resample-ctx*
                                  (:ch-layout output-format)
@@ -705,18 +705,9 @@
        :internal/output-frame [state {:out [msg]}]))})
 
 
-(defn frame->buf [frame]
-  (assert
-   (not= 1 (av_sample_fmt_is_planar (:format frame)))
-   "Getting buffer data from planar frames not supported.")
-  (let [buf-size (first (:linesize frame))
-        buf (-> (:data frame)
-                (nth 0)
-                (.getPointer)
-                (.getByteBuffer 0 buf-size))]
-    buf))
 
-(defn frame->byte-array [frame bs]
+
+#_(defn frame->byte-array [frame bs]
   (assert
    (not= 1 (av_sample_fmt_is_planar (:format frame)))
    "Getting buffer data from planar frames not supported.")

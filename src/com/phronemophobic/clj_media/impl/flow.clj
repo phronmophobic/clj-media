@@ -184,66 +184,12 @@
                   outs)]
        [state outs]))})
 
-(defn ^:private format-context-streams* [format-context]
-  (let [num-streams (:nb_streams format-context)
-
-        num-bytes (* 8 num-streams)
-
-        streams (-> (native-buffer/wrap-address (:streams format-context)
-                                                num-bytes)
-                    (native-buffer/set-native-datatype :uint64))]
-    (into []
-          (map #(dt-ffi/ptr->struct :AVStream (dt-ffi/->pointer %)))
-          streams)))
-
 (defn ^:private find-stream-info* [format-context]
   (let [err (raw/avformat_find_stream_info format-context nil)
         _ (when (not (zero? err))
             (throw (ex-info "Could not find stream info."
                             {:error-code err})))]
     nil))
-
-
-(defn open-context [fname]
-  (let [format-context (raw/avformat_alloc_context)
-        _ (when (nil? format-context)
-            (throw (ex-info "Error allocating format context."
-                            {:filename fname})))
-        
-        format-context* (dt-ffi/make-ptr :pointer (-> format-context dt-ffi/->pointer .address))
-
-        _ (prn "opening" fname)
-
-        err (raw/avformat_open_input format-context* (dt-ffi/string->c fname) nil nil)]
-    (if (zero? err)
-      (reify 
-        dt-ffi/PToPointer
-        (convertible-to-pointer? [_] true)
-        (->pointer [_] (dt-ffi/->pointer format-context))
-        
-        clojure.lang.ILookup
-        (valAt [_ k]
-          nil
-          (case k
-            :streams (format-context-streams* format-context)
-            
-            ;; else
-            nil))
-        java.lang.AutoCloseable
-        (close [_]
-          (prn "closing context for " fname)
-          (raw/avformat_close_input format-context*)
-          ;; use value of format-context*, which may be nulled by close_input
-          ;; it's possible that free_context is redundant with close_input
-          (raw/avformat_free_context (first format-context*))))
-      
-      (do
-        (raw/avformat_close_input format-context*)
-        ;; use value of format-context*, which may be nulled by close_input
-        ;; it's possible that free_context is redundant with close_input
-        (raw/avformat_free_context (first format-context*))
-        (throw (ex-info "Error opening format context"
-                      {:error-code err}))))))
 
 (defn open-output-context [fname oformat]
   (let [output-io-context* (dt-ffi/make-ptr :pointer 0)
@@ -1183,7 +1129,7 @@
 
 (defn file-packet-flow-init-context [state fname]
   (assert (nil? (:format-context state)))
-  (let [format-context (open-context fname)]
+  (let [format-context (av/open-context fname)]
     (find-stream-info* format-context)
 
     (when-let [start-timestamp (:start-timestamp state)]

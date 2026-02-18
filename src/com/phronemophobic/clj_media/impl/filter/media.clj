@@ -1,8 +1,6 @@
 (ns com.phronemophobic.clj-media.impl.filter.media
   (:refer-clojure :exclude [format])
-  (:require [com.phronemophobic.clj-media.impl.filter.frame
-             :as ff]
-            [net.cgrand.xforms :as x]
+  (:require [net.cgrand.xforms :as x]
             [clojure.java.io :as io]
             [clojure.core.protocols :as p]
             [clojure.string :as str]
@@ -43,31 +41,31 @@
 
 
 
-(defprotocol IComputeNode
+#_(defprotocol IComputeNode
   (configure! [this input-ports]))
 
 ;; All frames from a frame source should the same format
-(defprotocol IFrameSource
+#_(defprotocol IFrameSource
   (-frame-inputs [this])
   (-frame-outputs [this])
   (-frames [this])
   (-format [this]))
 
-(defprotocol ITransformName
+#_(defprotocol ITransformName
   (-transform-name [this]))
 
 
-(defprotocol IMediaSource
+#_(defprotocol IMediaSource
   (-media [this]
     "Returns a collection of IFrameSource")
   (-media2 [this]
     "Returns a collection of IFrameSource")
   (-media-inputs [this]))
 
-(defn media-source? [x]
+#_(defn media-source? [x]
   (satisfies? IMediaSource x))
 
-(defrecord FrameSource [frames format inputs transform-name]
+#_(defrecord FrameSource [frames format inputs transform-name]
   ITransformName
   (-transform-name [this]
     transform-name)
@@ -79,22 +77,22 @@
   (-format [this]
     format))
 
-(defn frame-source [frames format inputs transform-name]
+#_(defn frame-source [frames format inputs transform-name]
   (->FrameSource
    frames
    format
    inputs
    transform-name))
 
-(defn audio? [src]
+#_(defn audio? [src]
   (= :media-type/audio
      (:media-type (-format src))))
 
-(defn video? [src]
+#_(defn video? [src]
   (= :media-type/video
      (:media-type (-format src))))
 
-(defn map-audio [f]
+#_(defn map-audio [f]
   (map (fn [src]
          (if (audio? (-format src))
            (frame-source (eduction
@@ -105,7 +103,7 @@
                           "map-audio")
            src))))
 
-(defn map-video [f]
+#_(defn map-video [f]
   (map (fn [src]
          (if (video? (-format src))
            (frame-source (eduction
@@ -117,7 +115,7 @@
            src))))
 
 
-(defrecord MediaFile [fname]
+#_(defrecord MediaFile [fname]
   IComputeNode
   (configure! [this _input-ports]
     (let [format-context (av/open-context fname)
@@ -367,11 +365,11 @@
     ;;                                        AVMEDIA_TYPE_VIDEO "video")))))))
     ;;         streams))
 ))
-(defn media-file [f]
+#_(defn media-file [f]
   (->MediaFile
    (.getCanonicalPath (io/as-file f))))
 
-(defn audio-pts []
+#_(defn audio-pts []
   (comp
    (x/reductions
     (fn
@@ -383,7 +381,7 @@
             (.writeField "pts" sum)))])))
    (keep second)))
 
-(defn auto-format-video [input-format codec]
+#_(defn auto-format-video [input-format codec]
   (let [pix-fmt (:pixel-format input-format)
 
         pix_fmts (:pix_fmts codec)
@@ -398,7 +396,7 @@
       (let [output-pix-fmt (first pix-fmts)]
         (video/transcode-frame3 input-format output-pix-fmt)))))
 
-(defn auto-format-audio [input-format codec]
+#_(defn auto-format-audio [input-format codec]
   (let [{:keys [channel-layout sample-format sample-rate]} input-format
 
         sample_rates (:supported_samplerates codec)
@@ -441,12 +439,12 @@
                            :channel-layout channel-layout}]
         (audio/resample2 input-format output-format)))))
 
-(defn auto-format [input-format codec]
+#_(defn auto-format [input-format codec]
   (condp = (:media-type input-format)
     :media-type/audio (auto-format-audio input-format codec)
     :media-type/video (auto-format-video input-format codec)))
 
-(defn auto-format2 [input-format output-format]
+#_(defn auto-format2 [input-format output-format]
   (case (:media-type input-format)
     :media-type/audio
     ;; always resample to obey frame size.
@@ -458,13 +456,13 @@
       identity
       (video/transcode-frame3 input-format (:pixel-format output-format)))))
 
-(defn default-channel-layout []
+#_(defn default-channel-layout []
   (let [channel-layout (dt-struct/new-struct :AVChannelLayout {:container-type :native-heap})
         err (raw/av_channel_layout_from_string channel-layout (dt-ffi/string->c "stereo"))]
     (assert (zero? err))
     channel-layout))
 
-(defn pick-output-format
+#_(defn pick-output-format
   "Chooses an output format. Returns the input format if supported by the output format.
   Otherwise, tries to choose a good default"
   [fname output-format input-format]
@@ -553,7 +551,7 @@
           output-format)))))
 
 
-(defrecord FileWriter [opts fname media]
+#_(defrecord FileWriter [opts fname media]
   IMediaSource
   (-media-inputs [this]
     [media])
@@ -685,7 +683,7 @@
      ;;     nil)]})
 ))
 
-(defn filter-audio [media]
+#_(defn filter-audio [media]
   (reify
     IComputeNode
     (configure! [this input-ports]
@@ -703,7 +701,7 @@
                     (:media-type (-format src))))
                (-media media)))))
 
-(defn filter-video [media]
+#_(defn filter-video [media]
   (reify
     IComputeNode
     (configure! [this input-ports]
@@ -721,7 +719,7 @@
                     (:media-type (-format src))))
                (-media media)))))
 
-(defn filter-media-types [media-types media]
+#_(defn filter-media-types [media-types media]
   (reify
     IComputeNode
     (configure! [this input-ports]
@@ -737,7 +735,7 @@
                  (media-types (:media-type (-format src))))
                (-media media)))))
 
-(defn remove-media-types [media-types media]
+#_(defn remove-media-types [media-types media]
   (reify
     IComputeNode
     (configure! [this input-ports]
@@ -754,7 +752,7 @@
                       (media-types (:media-type (-format src)))))
             (-media media)))))
 
-(defrecord Union [medias]
+#_(defrecord Union [medias]
   IComputeNode
   (configure! [this input-ports]
     {:ports (into []
@@ -769,11 +767,11 @@
                 (distinct-by #(System/identityHashCode %)))
           medias)))
 
-(defn union [& medias]
+#_(defn union [& medias]
   (->Union medias))
 
 
-(defrecord MediaFrames [format frames]
+#_(defrecord MediaFrames [format frames]
   IComputeNode
   (configure! [this input-ports]
     (let [frame-seq (volatile! (seq frames))
@@ -801,15 +799,15 @@
       (datafy-media/map->format format)
       nil
       "raw-frames")]))
-
+#_
 (defn media-frames [format frames]
   (->MediaFrames format
                  frames))
 
-(defn ^:private ->url-str [fname]
+#_(defn ^:private ->url-str [fname]
   (str "file://" (.getCanonicalPath (io/file fname))))
 
-(deftype FramesReducible [media stream output-format]
+#_(deftype FramesReducible [media stream output-format]
   clojure.lang.IReduceInit
   (reduce [_ f init]
     (let [stream
@@ -851,7 +849,7 @@
        init
        (-frames stream)))))
 
-(defn frames-reducible
+#_(defn frames-reducible
   ([media stream]
    (frames-reducible media stream nil))
   ([media stream {:keys [format]
@@ -860,7 +858,7 @@
                       stream
                       format)))
 
-(defn compute-graph [media]
+#_(defn compute-graph [media]
   (let [[nodes edges]
         (loop [to-visit #{media}
                edges #{}
@@ -953,13 +951,13 @@
     ))
 
 
-(defn add-subscription [cg port-id f]
+#_(defn add-subscription [cg port-id f]
   (update-in cg [:subscriptions port-id]
              (fn [subs]
                (if subs
                  (conj subs f)
                  [f]))))
-(defn run-graph [cg]
+#_(defn run-graph [cg]
   (let [subscriptions (:subscriptions cg)
         send
         (fn send
@@ -984,7 +982,7 @@
           (cleaner)))))
   nil)
 
-(defn write!
+#_(defn write!
   ([media fname])
   ([media fname opts]
    (let [media (->FileWriter opts fname media)

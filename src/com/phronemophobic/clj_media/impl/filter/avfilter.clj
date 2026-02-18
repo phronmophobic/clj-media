@@ -1,7 +1,5 @@
 (ns com.phronemophobic.clj-media.impl.filter.avfilter
-  (:require [com.phronemophobic.clj-media.impl.filter.frame
-             :as ff]
-            [com.phronemophobic.clj-media.impl.filter.media
+  (:require [com.phronemophobic.clj-media.impl.filter.media
              :as fm]
             [clojure.string :as str]
             [clojure.datafy :as d]
@@ -36,7 +34,7 @@
            java.lang.ref.Cleaner))
 
 
-(defn video-filter [input-formats filter-name opts]
+#_(defn video-filter [input-formats filter-name opts]
   #_(let [filter-graph (avfilter_graph_alloc)
         _ (when (nil? filter-graph)
             (throw (Exception. "Failed to create filter graph")))
@@ -771,7 +769,7 @@
            {(get-in state [:in->internal in]) [msg]}]))))})
 
 
-(defrecord AVFilterMedia [filter-name opts media-type media]
+#_(defrecord AVFilterMedia [filter-name opts media-type media]
   fm/IComputeNode
   (configure! [this input-ports]
     #_(let [matches-media-type?
@@ -880,7 +878,7 @@
   )
 
 
-(defrecord AVMultiFilterMedia [filter-name opts media-type medias]
+#_(defrecord AVMultiFilterMedia [filter-name opts media-type medias]
   fm/IComputeNode
   (configure! [this input-ports]
     #_(let [matches-media-type? (fn [port]
@@ -1025,7 +1023,7 @@
       (conj unfiltered-outputs filtered-output))))
 
 
-(defn concat-filter [input-formats opts]
+#_(defn concat-filter [input-formats opts]
   #_(let [filter-graph (avfilter_graph_alloc)
         _ (when (nil? filter-graph)
             (throw (Exception. "Failed to create filter graph")))
@@ -1263,7 +1261,7 @@
            (map-indexed vector output-contexts)))))}))
 
 
-(defrecord AVConcatFilterMedia [opts medias]
+#_(defrecord AVConcatFilterMedia [opts medias]
   fm/IComputeNode
   (configure! [this input-ports]
     (let [
@@ -1633,7 +1631,7 @@
              (list-filters))))
 
 
-(defrecord ForceFormat [format media]
+#_(defrecord ForceFormat [format media]
   fm/IMediaSource
   (-media-inputs [this]
     [media])
@@ -1648,12 +1646,12 @@
              "force-format"))
           (fm/-media media))))
 
-(defn force-format
+#_(defn force-format
   "Used for testing."
   [format media]
   (->ForceFormat format media))
 
-(defrecord Swscale [opts output-format media]
+#_(defrecord Swscale [opts output-format media]
   fm/IComputeNode
   (configure! [this input-ports]
     (let [
@@ -1732,6 +1730,6 @@
               src))
           (fm/-media media))))
 
-(defn swscale [opts output-format media]
+#_(defn swscale [opts output-format media]
   (->Swscale opts output-format media))
 

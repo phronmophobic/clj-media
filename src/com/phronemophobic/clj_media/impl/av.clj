@@ -7,6 +7,7 @@
             [tech.v3.datatype :as dt]
             [tech.v3.datatype.ffi :as dt-ffi]
             [tech.v3.datatype.native-buffer :as native-buffer]
+            tech.v3.resource
             [com.phronemophobic.clj-media.impl.datafy
              :as datafy-media]
             [clojure.edn :as edn]
@@ -30,10 +31,10 @@
 
 ;; (raw/import-structs!)
 
-(def cleaner (Cleaner/create))
+#_(def cleaner (Cleaner/create))
 
-(defonce handles (atom #{}))
-(defn ref! [o]
+#_(defonce handles (atom #{}))
+#_(defn ref! [o]
   (swap! handles conj o)
   o)
 
@@ -304,7 +305,7 @@
 ;;                     result)]
 ;;        result))))
 
-(defn open-context [fname]
+#_(defn open-context [fname]
   (let [format-ctx (avformat_alloc_context)
         _ (when (nil? format-ctx)
             (throw (ex-info "Error allocating format context."
@@ -313,28 +314,92 @@
         format-ctx* (dt-ffi/make-ptr :pointer (-> format-ctx
                                                   dt-ffi/->pointer
                                                   .address))
-        #_(doto (PointerByReference.)
-                      (.setValue (.getPointer format-ctx)))
-        _ (.register cleaner format-ctx
+
+        #_#__ (.register cleaner format-ctx
                      (fn []
                        (avformat_free_context (.getValue format-ctx*))))
+        _ (tech.v3.resource/track 
+           format-ctx
+           {:dispose-fn
+            (let [addr (-> format-ctx dt-ffi/->pointer .address)]
+              (fn []
+                (avformat_free_context addr)))})
         err (avformat_open_input format-ctx* (dt-ffi/string->c fname) nil nil)]
 
     (if (zero? err)
       (do
+        (tech.v3.resource/track 
+           format-ctx
+           {:dispose-fn
+            (let [addr (-> format-ctx dt-ffi/->pointer .address)]
+              (fn []
+                (avformat_free_context addr)))})
         (.register cleaner format-ctx
-                     (fn []
-                       (avformat_close_input
-                        
-                        ;; hold explicit reference to format-ctx
-                        (-> format-ctx
-                            dt-ffi/->pointer
-                            .address)
-                        #_(PointerByReference. format-ctx))))
+                   (fn []
+                     (avformat_close_input
+                      
+                      ;; hold explicit reference to format-ctx
+                      (-> format-ctx
+                          dt-ffi/->pointer
+                          .address)
+                      #_(PointerByReference. format-ctx))))
         format-ctx)
       (throw (ex-info "Error opening format context"
                       {:error-code err
                        :error-msg (error->str err)})))))
+
+(defn ^:private format-context-streams* [format-context]
+  (let [num-streams (:nb_streams format-context)
+
+        num-bytes (* 8 num-streams)
+
+        streams (-> (native-buffer/wrap-address (:streams format-context)
+                                                num-bytes)
+                    (native-buffer/set-native-datatype :uint64))]
+    (into []
+          (map #(dt-ffi/ptr->struct :AVStream (dt-ffi/->pointer %)))
+          streams)))
+
+(defn open-context [fname]
+  (let [format-context (raw/avformat_alloc_context)
+        _ (when (nil? format-context)
+            (throw (ex-info "Error allocating format context."
+                            {:filename fname})))
+        
+        format-context* (dt-ffi/make-ptr :pointer (-> format-context dt-ffi/->pointer .address))
+
+        _ (prn "opening" fname)
+
+        err (raw/avformat_open_input format-context* (dt-ffi/string->c fname) nil nil)]
+    (if (zero? err)
+      (reify 
+        dt-ffi/PToPointer
+        (convertible-to-pointer? [_] true)
+        (->pointer [_] (dt-ffi/->pointer format-context))
+        
+        clojure.lang.ILookup
+        (valAt [_ k]
+          nil
+          (case k
+            :streams (format-context-streams* format-context)
+            
+            ;; else
+            (get format-context k)))
+        java.lang.AutoCloseable
+        (close [_]
+          (prn "closing context for " fname)
+          (raw/avformat_close_input format-context*)
+          ;; use value of format-context*, which may be nulled by close_input
+          ;; it's possible that free_context is redundant with close_input
+          (raw/avformat_free_context (first format-context*))))
+      
+      (do
+        (raw/avformat_close_input format-context*)
+        ;; use value of format-context*, which may be nulled by close_input
+        ;; it's possible that free_context is redundant with close_input
+        (raw/avformat_free_context (first format-context*))
+        (throw (ex-info "Error opening format context"
+                      {:error-code err}))))))
 
 (defn video-codec-context-format [codec-context]
   {:codec {:id (:codec_id codec-context)}
@@ -363,7 +428,7 @@
     AVMEDIA_TYPE_AUDIO (audio-codec-context-format codec-context)
     AVMEDIA_TYPE_VIDEO (video-codec-context-format codec-context)))
 
-(defn add-stream [output-format-context encoder-context]
+#_(defn add-stream [output-format-context encoder-context]
   (let [output-format (:oformat output-format-context)
         output-format+ (dt-ffi/ptr->struct :AVOutputFormat output-format)
         #_(Structure/newInstance AVOutputFormatByReference
@@ -490,7 +555,7 @@
     :media-type/audio (audio-encoder-context format)))
 
 
-(defn find-decoder-context [media-type format-context]
+#_(defn find-decoder-context [media-type format-context]
   (let [err (avformat_find_stream_info format-context nil)
         _ (when (not (zero? err))
             (throw (ex-info "Could not find stream info."
@@ -550,7 +615,7 @@
                            {:error-code err})))
       decoder-context)))
 
-(defn open-output-context [fname]
+#_(defn open-output-context [fname]
   (let [;; output-io-context* (PointerByReference.)
         output-io-context* (dt-ffi/make-ptr :pointer 0)
         fname* (dt-ffi/string->c fname)
@@ -583,7 +648,7 @@
     output-format-context))
 
 
-(defn free [p]
+#_(defn free [p]
   #_(condp instance? p
     com.phronemophobic.clj_ffmpeg.structs.AVFormatContext.ByReference
     (avformat_close_input (doto (PointerByReference.)
@@ -593,7 +658,7 @@
     (avcodec_free_context (doto (PointerByReference.)
                             (.setValue (.getPointer p))))))
 
-(defmacro with-free
+#_(defmacro with-free
   [bindings & body]
   (cond
     (= (count bindings) 0) `(do ~@body)
@@ -624,56 +689,48 @@
 
 
 (defn probe [f]
+  
   (let [f (io/as-file f)
-        path (.getCanonicalPath f)
-        format-context (open-context path)
-        err (avformat_find_stream_info format-context nil)
-        _ (when (not (zero? err))
-            (throw (ex-info "Could not find stream info."
-                            {:error-code err})))
-        ;; num-streams (:nb_streams format-context)
-        num-streams (:nb_streams format-context)
-        ;; streams (.getPointerArray
-        ;;          (.readField format-context "streams")
-        ;;          0 num-streams)
-        streams (-> (native-buffer/wrap-address (:streams format-context)
-                                                (* 8 num-streams))
-                    (native-buffer/set-native-datatype :uint64))
-
-        streams-info
-        (into []
-              (comp
-               (map (fn [stream]
-                      (let [
-                            ;; stream+ (Structure/newInstance AVStreamByReference
-                            ;;                                 stream)
-                            stream+ (dt-ffi/ptr->struct :AVStream stream)
-                            stream-index (:index stream+)
-
-                            codec-parameters (dt-ffi/ptr->struct 
-                                              :AVCodecParameters
-                                              (:codecpar stream+))
-                            codec-id (:codec_id codec-parameters)
-
-                            media-type (:codec_type codec-parameters)
-
-                            format (merge
-                                    {:time-base (d/datafy (:time_base stream+))
-                                     :estimated-duration (:duration stream+)
-                                     :stream-index (:index stream+)}
-                                    (let [num-frames (:nb_frames stream+)]
-                                      (when (not (zero? num-frames))
-                                        {:num-frames num-frames}))
-                                    (when (= :media-type/video
-                                             media-type)
-                                      {:average-frame-rate (:avg_frame_rate stream+)})
-                                    (d/datafy codec-parameters))]
-                        format))))
-              streams)]
-    (avformat_close_input 
-     ;;(PointerByReference. (.getPointer format-context))
-     (dt-ffi/make-ptr :pointer (-> format-context (dt-ffi/->pointer) .address)))
-    {:streams streams-info}))
+          path (.getCanonicalPath f)]
+    (with-open [format-context (open-context path)]
+      (let [err (avformat_find_stream_info format-context nil)
+            _ (when (not (zero? err))
+                (throw (ex-info "Could not find stream info."
+                                {:error-code err})))
+            streams-info
+            (into []
+                  (comp
+                   (map (fn [stream+]
+                          (let [
+                                ;; stream+ (Structure/newInstance AVStreamByReference
+                                ;;                                 stream)
+                                ;; stream+ (dt-ffi/ptr->struct :AVStream stream)
+                                stream-index (:index stream+)
+                                
+                                codec-parameters (dt-ffi/ptr->struct 
+                                                  :AVCodecParameters
+                                                  (:codecpar stream+))
+                                codec-id (:codec_id codec-parameters)
+                                
+                                media-type (:codec_type codec-parameters)
+                                
+                                format (merge
+                                        {:time-base (d/datafy (:time_base stream+))
+                                         :estimated-duration (:duration stream+)
+                                         :stream-index (:index stream+)}
+                                        (let [num-frames (:nb_frames stream+)]
+                                          (when (not (zero? num-frames))
+                                            {:num-frames num-frames}))
+                                        (when (= :media-type/video
+                                                 media-type)
+                                          {:average-frame-rate (:avg_frame_rate stream+)})
+                                        (d/datafy codec-parameters))]
+                            format))))
+                  (:streams format-context))]
+        #_(avformat_close_input 
+         ;;(PointerByReference. (.getPointer format-context))
+         (dt-ffi/make-ptr :pointer (-> format-context (dt-ffi/->pointer) .address)))
+        {:streams streams-info}))))
 
 (comment
   (probe "../clj-media/my-fade-in-out.mp4")
@@ -681,7 +738,7 @@
 
 
 
-(defn make-frame [{:keys [bytes
+#_(defn make-frame [{:keys [bytes
                           format
                           time-base
                           key-frame?
