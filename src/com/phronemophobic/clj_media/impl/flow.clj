@@ -757,50 +757,55 @@
            (let [recycle-packet-internal (async/chan)
                  update-state-chan (async/chan (async/sliding-buffer 1))]
              (async/go
-              (let [initial-packets (into (queue)
-                                          (repeatedly n #(raw/av_packet_alloc)))]
-                (doseq [packet initial-packets]
-                  (tech.v3.resource/track 
-                   packet
-                   {:dispose-fn
-                    (let [addr (-> packet dt-ffi/->pointer .address)]
-                      (fn []
-                        (raw/av_packet_free (dt-ffi/make-ptr :pointer addr))))}))
-                (try
-                  (loop [fresh-packets initial-packets]
-                    (async/put! update-state-chan {:fresh-count (count fresh-packets)})
-                    ;; (prn "fresh packet count " (count fresh-packets))
-                    (let [ports [recycle-packet-internal]
-                          ports (if (seq fresh-packets)
-                                  (conj ports [fresh-packet-chan
-                                               (peek fresh-packets)])
-                                  ports)
-                          [val port] (async/alts! ports)]
-                      
-                      (cond
-                        (= port recycle-packet-internal) (when-let [packet val]
-                                                           (raw/av_packet_unref packet)
-                                                           (recur (conj fresh-packets
-                                                                        packet)))
-                        (= port fresh-packet-chan) (when val
-                                                     (recur (pop fresh-packets)))
+              (try
+                (loop [fresh-packets []]
+                  #_(async/put! update-state-chan {:fresh-count (count fresh-packets)})
+                  (let [fresh-packets (if (empty? fresh-packets)
+                                        (into fresh-packets
+                                              (map (fn [_]
+                                                     (let [packet (raw/av_packet_alloc)]
+                                                       (tech.v3.resource/track
+                                                        packet
+                                                        {:dispose-fn
+                                                         (let [addr (-> packet dt-ffi/->pointer .address)]
+                                                           (fn []
+                                                             (raw/av_packet_free (dt-ffi/make-ptr :pointer addr))))})
+                                                       packet)))
+                                              (range 10))
+                                        ;; else
+                                        fresh-packets)
                         
-                        :else (throw (ex-info "Unrecognized chan" {})))))
-                  (catch Exception e
-                    (prn e))
-                  (finally
-                    ;; make sure fresh-packet-chan is closed
-                    ;; (loop []
-                    ;;   (when-let [_ (async/<! fresh-packet-chan)]
-                    ;;     (recur)))
+                        ports [recycle-packet-internal]
+                        ports (if (seq fresh-packets)
+                                (conj ports [fresh-packet-chan
+                                             (peek fresh-packets)])
+                                ports)
+                        [val port] (async/alts! ports)]
                     
-                    ;; no way to ensure that this is run after shutdown
-                    ;; so someone might still be using frames. 
-                    #_#_(let [packet* (dt-ffi/make-ptr :pointer 0)]
-                      (doseq [packet initial-packets]
-                        (dt/set-value! packet* 0 (-> packet dt-ffi/->pointer .address))
-                        (raw/av_packet_free packet*)))
-                    (prn "all packets freed")))))
+                    (cond
+                      (= port recycle-packet-internal) (when-let [packet val]
+                                                         (raw/av_packet_unref packet)
+                                                         (recur (conj fresh-packets
+                                                                      packet)))
+                      (= port fresh-packet-chan) (when val
+                                                   (recur (pop fresh-packets)))
+                      
+                      :else (throw (ex-info "Unrecognized chan" {})))))
+                (catch Exception e
+                  (prn e))
+                (finally
+                  ;; make sure fresh-packet-chan is closed
+                  ;; (loop []
+                  ;;   (when-let [_ (async/<! fresh-packet-chan)]
+                  ;;     (recur)))
+                  
+                  ;; no way to ensure that this is run after shutdown
+                  ;; so someone might still be using frames. 
+                  #_#_(let [packet* (dt-ffi/make-ptr :pointer 0)]
+                        (doseq [packet initial-packets]
+                          (dt/set-value! packet* 0 (-> packet dt-ffi/->pointer .address))
+                          (raw/av_packet_free packet*)))
+                  (prn "all packets freed"))))
              (assoc state
                     ::flow/out-ports {:internal/recycle-packet recycle-packet-internal}
                     ::flow/in-ports {:update-state update-state-chan})))
@@ -833,48 +838,54 @@
                                          (async/chan 10))
                  update-state-chan (async/chan (async/sliding-buffer 1))]
              (async/go
-              (let [initial-frames (into (queue)
-                                         (repeatedly n #(raw/av_frame_alloc)))]
-                (doseq [frame initial-frames]
-                  (tech.v3.resource/track 
-                   frame
-                   {:dispose-fn
-                    (let [addr (-> frame dt-ffi/->pointer .address)]
-                      (fn []
-                        (raw/av_frame_free (dt-ffi/make-ptr :pointer addr))))}))
-
-                (try
-                  (loop [fresh-frames initial-frames]
-                    (async/put! update-state-chan {:fresh-count (count fresh-frames)})
-                    (let [ports [recycle-frame-internal]
-                          ports (if (seq fresh-frames)
-                                  (conj ports [fresh-frame-chan (peek fresh-frames)])
-                                  ports)
-                          [val port] (async/alts! ports)]
-                      (cond
-                        (= port recycle-frame-internal) (when-let [frame val]
-                                                          (raw/av_frame_unref frame)
-                                                          (recur (conj fresh-frames
-                                                                           frame)))
-                        (= port fresh-frame-chan) (when val
-                                                    (recur (pop fresh-frames)))
+              (try
+                (loop [fresh-frames []]
+                  #_(async/put! update-state-chan {:fresh-count (count fresh-frames)})
+                  
+                  (let [fresh-frames (if (empty? fresh-frames)
+                                       (into fresh-frames
+                                             (map (fn [_]
+                                                    (let [frame (raw/av_frame_alloc)]
+                                                      (tech.v3.resource/track 
+                                                       frame
+                                                       {:dispose-fn
+                                                        (let [addr (-> frame dt-ffi/->pointer .address)]
+                                                          (fn []
+                                                            (raw/av_frame_free (dt-ffi/make-ptr :pointer addr))))})
+                                                      frame)))
+                                             (range 10))
+                                       ;; else
+                                       fresh-frames)
                         
-                        :else (throw (ex-info "Unrecognized chan" {})))))
-                  (catch Exception e
-                    (prn e))
-                  (finally
-                    ;; make sure fresh-frame-chan is closed
-                    ;; (loop []
-                    ;;   (when-let [_ (async/<! fresh-frame-chan)]
-                    ;;     (recur)))
-
-                    ;; no way to ensure that this is run after shutdown
-                    ;; so someone might still be using frames. 
-                    #_(let [frame* (dt-ffi/make-ptr :pointer 0)]
+                        ports [recycle-frame-internal]
+                        ports (if (seq fresh-frames)
+                                (conj ports [fresh-frame-chan (peek fresh-frames)])
+                                ports)
+                        [val port] (async/alts! ports)]
+                    (cond
+                      (= port recycle-frame-internal) (when-let [frame val]
+                                                        (raw/av_frame_unref frame)
+                                                        (recur (conj fresh-frames
+                                                                     frame)))
+                      (= port fresh-frame-chan) (when val
+                                                  (recur (pop fresh-frames)))
+                      
+                      :else (throw (ex-info "Unrecognized chan" {})))))
+                (catch Exception e
+                  (prn e))
+                (finally
+                  ;; make sure fresh-frame-chan is closed
+                  ;; (loop []
+                  ;;   (when-let [_ (async/<! fresh-frame-chan)]
+                  ;;     (recur)))
+                  
+                  ;; no way to ensure that this is run after shutdown
+                  ;; so someone might still be using frames. 
+                  #_(let [frame* (dt-ffi/make-ptr :pointer 0)]
                       (doseq [frame initial-frames]
                         (dt/set-value! frame* 0 (-> frame dt-ffi/->pointer .address))
                         (raw/av_frame_free frame*)))
-                    #_(prn "all frames freed")))))
+                  #_(prn "all frames freed"))))
              
              (assoc state
                     ::flow/out-ports {:internal/recycle-frame recycle-frame-internal}
