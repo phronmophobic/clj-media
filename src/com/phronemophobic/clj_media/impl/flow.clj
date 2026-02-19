@@ -1253,10 +1253,7 @@
                  :params {::fresh-packet-chan "Channel to acquire fresh packets."
                           :filename "File to start decoding"
                           :start-timestamp "start producing packets from this ts"
-                          ;; since packets aren't necessarily produced in pts order
-                          ;; :end-timestamp doesn't make sense.
-                          :end-timestamp "stop producing packets at this ts."
-                          }
+                          :end-timestamp "stop producing packets at this ts."}
                  :outs {:packet "Packets from file."}})
     :init (fn [{::keys [fresh-packet-chan] :as state}]
             (assoc state
@@ -1294,14 +1291,24 @@
                                  tb (idx->time_base (:stream_index packet))
                                  _ (Map/.put packet :time_base tb)
 
+                                 start-timestamp (:start-timestamp state)
+                                 after-start? (if start-timestamp
+                                                (let [packet-pts (/ (* (:pts packet) (:num tb))
+                                                                    (:den tb))]
+                                                  (< start-timestamp packet-pts))
+                                                ;; else
+                                                true)
+
                                  end-timestamp (:end-timestamp state)
-                                 valid? (if end-timestamp
-                                          (let [packet-pts (/ (* (:pts packet) (:num tb))
-                                                              (:den tb))]
-                                            (< packet-pts end-timestamp))
-                                          ;; else
-                                          true)
-                                 eof? (if valid?
+                                 before-end? (if end-timestamp
+                                               (let [packet-pts (/ (* (:pts packet) (:num tb))
+                                                                   (:den tb))]
+                                                 (< packet-pts end-timestamp))
+                                               ;; else
+                                               true)
+                                 valid? (and after-start? before-end?)
+
+                                 eof? (if before-end?
                                         false
                                         (when end-timestamp
                                           (let [packet-dts (/ (* (:dts packet) (:num tb))
