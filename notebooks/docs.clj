@@ -182,11 +182,11 @@ encoded --> output.mp4
 
 ;; ### Linux dependencies
 
-;; The `libxcb-shape0` dependency must be installed to use clj-media on linux.
+;; The `libxcb-shape0` and `libpulse0` dependencies must be installed to use clj-media on linux.
 ;; It can usually be installed via a package manager like `apt`. For example:
 
 ;; ```bash
-;; sudo apt-get install libxcb-shape0
+;; sudo apt-get install libxcb-shape0 libpulse0
 ;; ```
 
 ;; ## Requires
