@@ -1,12 +1,14 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.12.4"}
-        net.cgrand/xforms {:mvn/version "0.19.5"}
-        com.phronemophobic/clong {:mvn/version "1.4.2"}
-        org.clojure/data.priority-map {:mvn/version "1.1.0"}
+        net.cgrand/xforms {:mvn/version "0.19.6"}
+        com.phronemophobic/clong {:mvn/version "1.4.4"}
+        org.clojure/data.priority-map {:mvn/version "1.2.1"}
         org.bytedeco/ffmpeg-platform {:mvn/version "7.1.1-1.5.12"}
         aysylu/loom {:mvn/version "1.0.2"}
         org.clojure/core.async {:mvn/version "1.9.808-alpha1"}
-        cnuernber/dtype-next {:mvn/version "11.004"}
+        cnuernber/dtype-next {:mvn/version "11.005"
+                              ;;:local/root "../dtype-next"
+                              }
         }
  :aliases
  {
@@ -14,12 +16,13 @@
   {:jvm-opts [;; "-Djava.library.path=/opt/local/lib"
               ;; "-Djna.library.path=../FFmpeg/build/lib"
               ]
-   :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.13-beta"}
+   :extra-deps {com.phronemophobic.membrane/skialib-macosx-aarch64 {;; :mvn/version "0.13-beta"
+                                                                    :local/root "../membrane/csource/macos-aarch64"}
                 ;; com.phronemophobic/clong {:local/root "../clong"}
                 org.bytedeco/llvm-platform {:mvn/version "20.1.7-1.5.12"}
-                com.phronemophobic/membrane {:mvn/version "0.13.1-beta"
-                                     ;; :local/root "../membrane2"
-                                     }
+                com.phronemophobic/membrane {;; :mvn/version "0.13.1-beta"
+                                             :local/root "../membrane"
+                                             }
                 io.github.nextjournal/clerk {:mvn/version "0.14.919"}}
    :extra-paths ["notebooks"]}
 
@@ -39,12 +42,12 @@
                             com.phronemophobic.clj-media.avfilter]}}
 
 
-  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.8.3" :git/sha "0d20256"}
+  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.12" :git/sha "0d20256"}
                  slipset/deps-deploy {:mvn/version "RELEASE"}}
           :ns-default build}
 
   :generate-docs
-  {:extra-deps {io.github.nextjournal/clerk {:mvn/version "0.14.919"
+  {:extra-deps {io.github.nextjournal/clerk {:mvn/version "0.18.1158"
                                              ;;:local/root "../clerk"
                                              }}
    :jvm-opts ["-Ddocs.media.prefix=media/"]
