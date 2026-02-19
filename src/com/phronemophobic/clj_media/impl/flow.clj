@@ -172,7 +172,7 @@
          (let [kickstart-ch (-> state
                                 ::flow/in-ports
                                 ::kickstart)]
-           (async/close! kickstart-ch true)))
+           (async/close! kickstart-ch)))
        state))
    :transform
    (fn [state in msg]
