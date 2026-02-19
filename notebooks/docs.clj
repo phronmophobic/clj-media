@@ -556,7 +556,7 @@ encoded --> output.mp4
 ;; Represents a media file on disk. 
 
 ;; Required keys: 
-;; - :file - A file path that can be used as an argument to `clojure.java.io/file`
+;; - `:file` - A file path that can be used as an argument to `clojure.java.io/file`
 
 ;; Optional keys:
 ;; - `:start-timestamp`: A timestamp (in seconds) to seek to before reading packets.
