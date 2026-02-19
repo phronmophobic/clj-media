@@ -12,7 +12,8 @@
    java.awt.image.BufferedImage
    java.awt.Graphics2D
    java.awt.Color
-   java.awt.RenderingHints)
+   java.awt.RenderingHints
+   java.io.File)
   )
 
 {:nextjournal.clerk/visibility {:code :hide :result :hide}}
@@ -31,6 +32,15 @@
     media-prefix
     "http://localhost:8000/media/"))
 
+(defn mkdirs [^File f]
+  (.mkdirs f))
+(defn getParentFile [f]
+  (.getParentFile f))
+(defn getCanonicalPath [f]
+  (.getCanonicalPath f))
+(defn exists [f]
+  (.exists f))
+
 (defmacro write! [& args]
   `(let [path# ~(let [fname (second args)
                       suffix (re-find #"\.[a-z0-9]+$" fname)]
@@ -38,11 +48,11 @@
                        suffix))
          f# (io/file "docs" "media" path#)
          f2# (io/file ~(second args))]
-     (.mkdirs (-> f#
-                  (.getParentFile)))
-     (when (not (.exists f#))
-       (clj-media/write! ~(first args) (.getCanonicalPath f#) ~@(nthrest args 2) )
-       (clj-media/write! ~(first args) (.getCanonicalPath f2#) ~@(nthrest args 2) ))
+     (mkdirs (-> f#
+                  (getParentFile)))
+     (when (not (exists f#))
+       (clj-media/write! ~(first args) (getCanonicalPath f#) ~@(nthrest args 2) )
+       (clj-media/write! ~(first args) (getCanonicalPath f2#) ~@(nthrest args 2) ))
      (clerk/col
       {::clerk/width :wide}
       (clerk/md
@@ -451,7 +461,10 @@ encoded --> output.mp4
      (clj-media/file "media/birds.mp4")
      :video
      {:format (clj-media/video-format
-               {:pixel-format :pixel-format/rgb565le})}))))
+               {:pixel-format
+                ;;:pixel-format/rgb565le
+                :pixel-format/rgb24
+                })}))))
 
 ;; ## Cropping Videos
 (write! (->> (clj-media/file "media/birds.mp4")
