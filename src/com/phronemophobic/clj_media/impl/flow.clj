@@ -1720,12 +1720,12 @@
         input-flows (into []
                           (map ->file-flow)
                           inputs)
+        
         g (apply merge-flows input-flows)
-        g (update g :format->coord
-                  (fn [fcs]
-                    (into (or fcs [])
-                          (mapcat :format->coord)
-                          input-flows)))]
+        g (assoc g :format->coord
+                 (into []
+                       (mapcat :format->coord)
+                       input-flows))]
     g))
 
 (defmethod ->file-flow :concat [media]
