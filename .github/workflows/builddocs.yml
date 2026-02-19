@@ -42,7 +42,7 @@ jobs:
       - name: Update packages
         run: sudo apt-get update -y
       - name: Install dependencies
-        run: sudo apt-get -y install libxcb-shape0
+        run: sudo apt-get -y install libxcb-shape0 libpulse0
       - name: Build static
         run: clojure -X:generate-docs
       - name: Build codox
