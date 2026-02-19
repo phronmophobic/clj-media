@@ -531,6 +531,99 @@ encoded --> output.mp4
 
 
 
+
+;; # Media Data
+
+;; clj-media represents media as maps. Each map has a `:type` key. The currently supported types are
+;; - :file
+;; - :union
+;; - :concat
+;; - :frames
+;; - :avfilter
+;; - :filter-audio
+;; - :filter-video
+;; - :remove-audio
+;; - :remove-video
+
+
+;; Depending on the `:type`, there are optional and required keys as documented below.
+;; For convenience, these maps can be constructed using helper functions like clj-media/file, but 
+;; it's also completely fine to create and transform these maps using regular clojure code.
+
+;; ## Media Data Specifications
+;; ### :file
+
+;; Represents a media file on disk. 
+
+;; Required keys: 
+;; - :file - A file path that can be used as an argument to `clojure.java.io/file`
+
+;; Optional keys:
+;; - `:start-timestamp`: A timestamp (in seconds) to seek to before reading packets.
+;; - `:end-timestamp`: A timestamp (in seconds) to stop reading packets.   
+
+;; ### :union
+;; 
+;; Combines the streams of all `:inputs`. The combined streams will be as if they start at the same time.      
+;; 
+;; Optional keys:
+;; - `:inputs`: a collection of media to combine streams.
+;; 
+;; ### :concat
+;; 
+;; Represents a media with all media `:inputs` combined one after another. 
+;; 
+;; Optional keys:
+;; - `:inputs`: A collection of media to combine.
+;; 
+;; ### :frames
+;; 
+;; Represents media with the provided `:frames` in the specified `:format`.
+;; 
+;; Required keys:
+;; - `:format`: A format as returned from `clj-media/audio-format` or `clj-media/video-format`.
+;; - `:frames`: a sequence of frames. 
+;; 
+;; Frames are maps with the following keys.
+;; Required frame keys:
+;; - `:time-base`: A vector of [numerator denominator] that represents the time base
+;; - `:pts`: The presentation timestamp in `:time-base` units.
+;; - `:bytes`: The frame data in the format specified by `:format`. Can be any type accepted by `dt/copy!`.
+;; - `:format`: A format as returned from `clj-media/audio-format` or `clj-media/video-format`.
+;; 
+;; Optional frame keys:
+;; - `:key-frame?`: True if this frame is a key frame.
+;; 
+;; ### :avfilter
+;; 
+;; Represents a media with the avfilter `:filter-name` applied.
+;; 
+;; Required keys:
+;; - `:filter-name` The name of the avfilter.
+;; - `:inputs`: The media inputs to the filter.
+;; 
+;; Optional keys:
+;; - `:opts`: The options to supply to the filter.
+;; - `:output-format`: A format as returned from `clj-media/audio-format` or `clj-media/video-format`. The frames will be transcoded as necessary.
+;; 
+;; ### :filter-audio
+;; 
+;; Discards any non-audio streams.
+;; 
+;; ### :filter-video
+;; 
+;; Discards any non-video streams.
+;; 
+;; ### :remove-audio
+;; 
+;; Discards any audio streams.
+;; 
+;; ### :remove-video
+;; 
+;; Discards any video streams.
+
+
+
 ^{:nextjournal.clerk/visibility {:code :hide :result :hide}}
 (comment
   (clerk/serve! {:watch-paths ["notebooks/docs.clj"]})
@@ -546,4 +639,3 @@ encoded --> output.mp4
 
   
   ,) 
-
