@@ -48,7 +48,7 @@ jobs:
       - name: Build codox
         run: clojure -X:codox
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v1
+        uses: actions/upload-pages-artifact@v4
         with:
           path: 'docs'
       - name: Deploy to GitHub Pages
