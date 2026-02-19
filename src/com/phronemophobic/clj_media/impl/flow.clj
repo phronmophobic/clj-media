@@ -9,6 +9,7 @@
             [com.phronemophobic.clj-media.impl.audio :as audio]
             [com.phronemophobic.clj-media.impl.datafy :as media.datafy]
             [com.phronemophobic.clj-media.impl.filter.avfilter :as avfilter]
+            [com.phronemophobic.clj-media.impl.model :as impl.model]
             [tech.v3.tensor :as dtt]
             tech.v3.resource
             [tech.v3.datatype.struct :as dt-struct]
@@ -2065,123 +2066,9 @@
         ]
     g))
 
-(defn frames-reducible [media]
-  (reify clojure.lang.IReduceInit
-    (reduce [_ f init]
-      (let [g (->frame-flow media)
-            frame-chan (async/chan 12)
-            recycle-frame-chan (async/chan 10)
-            
-            g (merge-flows
-               g
-               {:procs {:frame-out {:proc (flow/process
-                                           (flow/map->step
-                                            {:describe (fn [] {:ins {:in "  "}
-                                                               :params {:chan "Channel to put values onto"}})
-                                             :init (fn [m] 
-                                                     (assoc m
-                                                            ::flow/out-ports {:out (:chan m)}))
-                                             :transform (fn [state _ msg]
-                                                          (case (:type msg)
-                                                            :stream-opened [state]
-                                                            :stream-closed
-                                                            (do
-                                                              (async/close! (:chan state))
-                                                              [state])
-                                                            :new-frame
-                                                            [state {:out [(:frame msg)]}]))}))
-                                    :args {:chan frame-chan}}}
-                :conns [[(-> g :out-coord) [:frame-out :in]]]})
 
-            g (-> g
-                  (add-frame-recycler)
-                  (add-packet-recycler)
-                  (assoc-in [:procs ::frame-recycler :args :recycle-frame] recycle-frame-chan))
-            
-            
-            flow (flow/create-flow g)
-            _ (-> flow flow/start monitoring)
-            
-            
-            ]
-        (track-flow flow)
-        (flow/resume flow)
-        
-        (let [result (loop [result init]
-                       (if-let [frame (async/<!! frame-chan)]
-                         (let [result (f result frame)]
-                           (async/put! recycle-frame-chan frame)
-                           (if (reduced? result)
-                             @result
-                             (recur result)))
-                         result))]
-          (flow/stop flow)
-          result)))))
 
-(require 'membrane.skia)
-(def pixmap #'membrane.skia/pixmap)
 
-(defn -main [& args]
-  (let [uuid (random-uuid)
-        next-int (let [atm (atom 0)]
-                   (fn []
-                     (swap! atm inc)))]
-    (time
-     (run! (fn [frame]
-            (prn (:pts frame))
-            
-            (let [linesize (-> frame :linesize first)
-                  width (:width frame)
-                  height (:height frame)
-                  buf-size (* linesize height)
-                  i (next-int)]
-              (membrane.skia/save-image
-               (str "frames/frame" i ".png")
-               (pixmap [uuid i]
-                       (dt/->byte-array
-                        (native-buffer/wrap-address (first (:data frame))
-                                                    buf-size))
-                       width height membrane.skia/kBGRA_8888_SkColorType membrane.skia/kOpaque_SkAlphaType 
-                       linesize))))
-           (frames-reducible 
-            {:type :avfilter
-             :output-format {:media-type :media-type/video
-                             :pixel-format :pixel-format/bgra}
-             :filter-name "hstack"
-             :inputs [{:type :concat
-                       :inputs [{:type :avfilter
-                                 :filter-name "vflip"
-                                 :inputs [{:file media-fname
-                                           :stream :video
-                                           :type :file}]}
-                                {:file media-fname
-                                 :stream :video
-                                 :type :file}]}
-                      {:type :concat
-                       :inputs [{:type :avfilter
-                                 :filter-name "gblur"
-                                 :opts {:sigma 20}
-                                 :inputs [{:file media-fname
-                                           :stream :video
-                                           :type :file}]}
-                                {:file media-fname
-                                 :stream :video
-                                 :type :file}]}]}
-            
-            
-            #_{:type :avfilter
-               :output-format {:media-type :media-type/video
-                               :pixel-format :pixel-format/bgra}
-               :filter-name "null"
-               :inputs [{:type :avfilter
-                         :filter-name "gblur"
-                         :opts {:sigma 100}
-                         :inputs [{:file media-fname
-                                   :start-timestamp (+ (* 2 3600) (* 60 29) 0)
-                                   :stream :video
-                                   :type :file}]}]}))))
-  (prn "done")
-  (Thread/sleep (long 5e3)))
 
 
 (comment
@@ -2741,7 +2628,7 @@
          
          :new-packet
          (let [stream-index (port->idx in)]
-           (prn in stream-index (:pts (:packet msg)))
+           #_(prn in stream-index (:pts (:packet msg)))
            [state {:out [{:type :new-packet
                           :packet (doto (:packet msg)
                                     (Map/.put :stream_index stream-index))}]}])))}))
@@ -3114,6 +3001,215 @@
     (tap> g)
     
     g))
+
+(defn frames-reducible [media stream opts]
+  (reify clojure.lang.IReduceInit
+          (reduce [_ f init]
+            (let [g (->file-flow media)
+                  format->coord (:format->coord g)
+                  
+                  stream-index-xform (if (number? stream)
+                                       (keep-indexed (fn [i [format coord]]
+                                                       (when (= i stream)
+                                                         i)))
+                                       (case stream
+                                         :audio (keep-indexed (fn [i [format coord]]
+                                                                (when (= :media-type/audio
+                                                                         (:media-type format))
+                                                                  i)))
+                                         :video (keep-indexed (fn [i [format coord]]
+                                                                (when (= :media-type/video
+                                                                         (:media-type format))
+                                                                  i)))
+                                         ;; else
+                                         (throw (ex-info "Unexpected stream specifier"
+                                                         {:media media
+                                                          :stream stream
+                                                          :opts opts}))))
+                  
+                  stream-index (first-by
+                                stream-index-xform
+                                format->coord)
+                  
+                  _ (when (not stream-index)
+                      (throw (ex-info "No matching stream found"
+                                      {:media media
+                                       :stream stream
+                                       :opts opts})))
+                  
+                  
+                  recycle-conns (into []
+                                      (keep-indexed
+                                       (fn [i [format coord]]
+                                         (when (not= i stream-index)
+                                           (case (:container-type format)
+                                             :packet [coord
+                                                      [::packet-recycler ::recycle-stream]]
+                                             :frame [coord
+                                                     [::frame-recycler ::recycle-stream]]))))
+                                      format->coord)
+                  g (merge-flows g
+                                 {:conns recycle-conns})
+                  
+                  [stream-format stream-coord] (nth format->coord stream-index)
+                  media-type (:media-type stream-format)
+                  
+                  ;; decode if necessary
+                  [g out-coord] (if (= :frame
+                                       (:container-type stream-format))
+                                  [g stream-coord]
+                                  (let [
+                                        decoder-pid (gen-pid "decoder")
+                                        decoder-flow {:procs {decoder-pid {:proc (-> (packet->frames)
+                                                                                     flow/map->step
+                                                                                     flow/process)}}
+                                                      :conns [
+                                                              [stream-coord [decoder-pid :packet]]]}
+                                        g (merge-flows decoder-flow
+                                                       g)]
+                                    [g [decoder-pid :frame]]))
+                  
+                  ;; transcode if necessary
+                  [g out-coord] (if-let [output-format (:format opts)]
+                                  (let [transcode-pid (gen-pid "transcode")
+                                        transcode-flow
+                                        {:procs {transcode-pid
+                                                 {:proc (-> (avfilter/filter-proc [[:in ""]])
+                                                            flow/map->step
+                                                            flow/process)
+                                                  :args {:filter-name (case media-type
+                                                                        :media-type/audio "anull"
+                                                                        :media-type/video "null")
+                                                         :output-format 
+                                                         (media.datafy/map->format output-format)}}}
+                                         :conns [[out-coord [transcode-pid :in]]]}
+
+                                        g (merge-flows g transcode-flow)]
+                                    [g [transcode-pid :out]])
+                                  ;; else
+                                  [g out-coord])
+                  
+                  frame-chan (async/chan 12)
+                  recycle-frame-chan (async/chan 10)
+                  
+                  g (merge-flows
+                     g
+                     {:procs {:frame-out {:proc (flow/process
+                                                 (flow/map->step
+                                                  {:describe (fn [] {:ins {:in "  "}
+                                                                     :params {:chan "Channel to put values onto"}})
+                                                   :init (fn [m] 
+                                                           (assoc m
+                                                                  ::flow/out-ports {:out (:chan m)}))
+                                                   :transform (fn [state _ msg]
+                                                                (case (:type msg)
+                                                                  :stream-opened [state]
+                                                                  :stream-closed
+                                                                  (do
+                                                                    (async/close! (:chan state))
+                                                                    [state])
+                                                                  :new-frame
+                                                                  [state {:out [(:frame msg)]}]))}))
+                                          :args {:chan frame-chan}}}
+                      :conns [[out-coord [:frame-out :in]]]})
+                  
+                  g (-> g
+                        (add-frame-recycler)
+                        (add-packet-recycler)
+                        (assoc-in [:procs ::frame-recycler :args :recycle-frame] recycle-frame-chan))
+                  
+                  
+                  flow (flow/create-flow g)
+                  _ (-> flow flow/start monitoring)
+                  
+                  
+                  ]
+              (track-flow flow)
+              (flow/resume flow)
+              
+              (let [
+                    wrap-frame (case media-type
+                                 :media-type/audio impl.model/->AudioFrame
+                                 :media-type/video impl.model/->VideoFrame)
+                    result (loop [result init]
+                             (if-let [frame (async/<!! frame-chan)]
+                               (let [frame* (volatile! frame)
+                                     wrapped-frame (wrap-frame frame*)
+                                     result (f result wrapped-frame)]
+                                 (vreset! frame* nil)
+                                 (async/put! recycle-frame-chan frame)
+                                 (if (reduced? result)
+                                   @result
+                                   (recur result)))
+                               result))]
+                (flow/stop flow)
+                result)))))
+
+
+(require 'membrane.skia)
+(def pixmap #'membrane.skia/pixmap)
+
+(defn -main [& args]
+  (let [uuid (random-uuid)
+        next-int (let [atm (atom 0)]
+                   (fn []
+                     (swap! atm inc)))]
+    (time
+     (run! (fn [frame]
+            (prn (:pts frame))
+            
+            (let [linesize (-> frame :linesize first)
+                  width (:width frame)
+                  height (:height frame)
+                  buf-size (* linesize height)
+                  i (next-int)]
+              (membrane.skia/save-image
+               (str "frames/frame" i ".png")
+               (pixmap [uuid i]
+                       (dt/->byte-array
+                        (native-buffer/wrap-address (first (:data frame))
+                                                    buf-size))
+                       width height membrane.skia/kBGRA_8888_SkColorType membrane.skia/kOpaque_SkAlphaType 
+                       linesize))))
+           (frames-reducible 
+            {:type :avfilter
+             :output-format {:media-type :media-type/video
+                             :pixel-format :pixel-format/bgra}
+             :filter-name "hstack"
+             :inputs [{:type :concat
+                       :inputs [{:type :avfilter
+                                 :filter-name "vflip"
+                                 :inputs [{:file media-fname
+                                           :stream :video
+                                           :type :file}]}
+                                {:file media-fname
+                                 :stream :video
+                                 :type :file}]}
+                      {:type :concat
+                       :inputs [{:type :avfilter
+                                 :filter-name "gblur"
+                                 :opts {:sigma 20}
+                                 :inputs [{:file media-fname
+                                           :stream :video
+                                           :type :file}]}
+                                {:file media-fname
+                                 :stream :video
+                                 :type :file}]}]}
+            
+            
+            #_{:type :avfilter
+               :output-format {:media-type :media-type/video
+                               :pixel-format :pixel-format/bgra}
+               :filter-name "null"
+               :inputs [{:type :avfilter
+                         :filter-name "gblur"
+                         :opts {:sigma 100}
+                         :inputs [{:file media-fname
+                                   :start-timestamp (+ (* 2 3600) (* 60 29) 0)
+                                   :stream :video
+                                   :type :file}]}]}))))
+  (prn "done")
+  (Thread/sleep (long 5e3)))
 
 (defn -main [& args]
   

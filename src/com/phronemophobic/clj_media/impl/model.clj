@@ -18,48 +18,49 @@
 (defprotocol IRawFrame
   (raw-frame [frame]))
 
+;; Using a volatile for frame so we can remove access
 (deftype VideoFrame [frame]
   model/IFrame
   (media-type [this]
     :media-type/video)
   (media-format [this]
-    (datafy-media/pixel-format->kw (:format frame)))
+    (datafy-media/pixel-format->kw (:format @frame)))
   (presentation-time [this]
-    (presentation-time* frame))
+    (presentation-time* @frame))
   (pts [this]
-    (:pts frame))
+    (:pts @frame))
   (time-base [this]
-    (d/datafy (:time_base frame)))
+    (d/datafy (:time_base @frame)))
 
   model/IFrameData
   (byte-buffer [this]
-    (video/frame->buf frame))
+    (video/frame->buf @frame))
 
   model/IVideoFrame
   (image [this]
-    (video/frame->img frame))
+    (video/frame->img @frame))
 
   IRawFrame
   (raw-frame [this]
-    frame))
+    @frame))
 
 (deftype AudioFrame [frame]
   model/IFrame
   (media-type [this]
     :media-type/audio)
   (media-format [this]
-    (datafy-media/sample-format->kw (:format frame)))
+    (datafy-media/sample-format->kw (:format @frame)))
   (presentation-time [this]
-    (presentation-time* frame))
+    (presentation-time* @frame))
   (pts [this]
-    (:pts frame))
+    (:pts @frame))
   (time-base [this]
-    (d/datafy (:time_base frame)))
+    (d/datafy (:time_base @frame)))
 
   model/IFrameData
   (byte-buffer [this]
-    (audio/frame->buf frame))
+    (audio/frame->buf @frame))
 
   IRawFrame
   (raw-frame [this]
-    frame))
+    @frame))

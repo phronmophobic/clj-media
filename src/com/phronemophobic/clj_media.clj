@@ -171,11 +171,11 @@
             format if not already in that format.
   "
   ([media]
-   (fm/frames-reducible media 0 nil))
+   (frames media 0))
   ([media stream]
-   (fm/frames-reducible media stream nil))
+   (frames media stream nil))
   ([media stream opts]
-   (fm/frames-reducible media stream opts)))
+   (impl.flow/frames-reducible media stream opts)))
 
 (defn play-audio
   "Plays the first audio stream in `media`."
@@ -197,8 +197,8 @@
 
 
 (defn make-frame
-  "Returns an opaque, raw frame for creating media with `make-media`.
-
+  "This function is deprecated. Just use a map.
+  
   The following keys are required:
   `:format`: map describing the format returned by `audio-format` or `video-format`.
   `:bytes`: a byte array with the raw data adhering to `:format`.
@@ -222,13 +222,15 @@
            key-frame?
            pts]
     :as m}]
-  (av/make-frame m))
+  m)
 
 (defn make-media
   "Returns media using raw data found in `frames`. `frames`
   must be a sequence of frames created with `make-frame`."
   [format frames]
-  (fm/media-frames format frames))
+  {:format format
+   :frames frames
+   :type :frames})
 
 (comment
   (av/probe "my-video.mp4")

@@ -9,6 +9,7 @@
             [tech.v3.datatype :as dt]
             [tech.v3.datatype.ffi :as dt-ffi]
             [tech.v3.datatype.native-buffer :as native-buffer]
+            [tech.v3.datatype.nio-buffer :as dt-nio-buffer]
             [tech.v3.datatype.casting :as dt-casting]
             [com.phronemophobic.clj-media.impl.flow :as-alias impl.flow]
             [com.phronemophobic.clj-media.impl.raw :as raw
@@ -248,17 +249,17 @@
 
 
 
-(defn frame->buf [sample-format]
-  (let [bytes-per-sample (av_get_bytes_per_sample sample-format)]
-    (map (fn [frame]
-           (let [buf-size (* bytes-per-sample
-                             (:nb_samples frame )
-                             (:channels frame ))
-                 buf (-> (nth (:data frame ) 0)
-                         (native-buffer/wrap-address buf-size)
-                         (dt/->byte-array))]
-             
-             buf)))))
+;; I think this is wrong for planar audio
+(defn frame->buf [frame]
+  (let [sample-format (:format frame)
+        bytes-per-sample (av_get_bytes_per_sample sample-format)
+        buf-size (* bytes-per-sample
+                    (:nb_samples frame )
+                    (-> frame :ch_layout :nb_channels))
+        buf (-> (nth (:data frame ) 0)
+                (native-buffer/wrap-address buf-size)
+                (dt-nio-buffer/->nio-buffer))]
+    buf))
 
 
 
