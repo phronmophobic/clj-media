@@ -356,6 +356,7 @@
                             ;; outs
                             ready-for-packet-chan
                             recycle-frame-chan
+                            error-chan
                             out-chan]
   (let [port->idx (into {}
                         (map-indexed (fn [i ch]
@@ -541,11 +542,10 @@
                  (recur state output-packet))))))
        (catch Throwable t
          (tap> t)
-         (prn t))
+         (prn t)
+         (async/put! error-chan t))
        (finally
-         (println "exiting encoder")))))
-  
-  )
+         (println "exiting encoder"))))))
 
 (defn wrap-frame-encoder-input-filter [ins transform]
   (fn [state in msg]
@@ -605,6 +605,7 @@
                                     ins)
                  internal-ready-for-packet-chan (async/chan 1)
                  internal-recycle-frame-chan (async/chan 1)
+                 internal-error-chan (async/chan 1)
                  internal-out-chan (async/chan 5)]
              (frame-encoder-thread (into []
                                          (map (fn [[stream-id _]]
@@ -614,6 +615,7 @@
                                    fresh-packet-chan
                                    internal-ready-for-packet-chan
                                    internal-recycle-frame-chan
+                                   internal-error-chan
                                    internal-out-chan)
              (assoc state
                     :status :closed
@@ -625,7 +627,7 @@
                     ::flow/in-ports {:internal/ready-for-packet internal-ready-for-packet-chan
                                      :internal/recycle internal-recycle-frame-chan
                                      :internal/output-packet internal-out-chan
-                                     })))
+                                     :internal/error internal-error-chan})))
    :transition (fn [state status]
                  (if  (= status ::flow/stop)
                    (do
@@ -646,6 +648,7 @@
         :internal/recycle [state
                            {::recycle-frame [msg]}]
         :internal/output-packet [state {:packet [msg]}]
+        :internal/error (throw msg)
         ;; else
         [(assoc state :ready? false) {(get-in state [:in->internal in]) [msg]}])))})
 
@@ -1329,6 +1332,7 @@
                             ready-for-packet-chan
                             ;; outs
                             recycle-packet-chan
+                            error-chan
                             frame-chan]
   
   (async/thread
@@ -1402,7 +1406,8 @@
            nil)))
      (catch Throwable t
        (tap> t)
-       (prn t))
+       (prn t)
+       (async/put! error-chan t))
      (finally 
        (prn "closing thread")))))
 
@@ -1417,15 +1422,18 @@
            (let [internal-packet-chan (async/chan)
                  ready-for-packet-chan (async/chan 1)
                  internal-recycle-chan (async/chan 1)
-                 internal-frame-chan (async/chan 5)]
+                 internal-frame-chan (async/chan 5)
+                 internal-error-chan (async/chan 1)]
              (packet->frame-thread internal-packet-chan
                                    fresh-frame-chan
                                    ready-for-packet-chan
                                    internal-recycle-chan
+                                   internal-error-chan
                                    internal-frame-chan)
              (assoc state
                     ::flow/in-ports {:internal/recycle2 internal-recycle-chan
                                      :internal/ready-for-packet ready-for-packet-chan
+                                     :internal/error internal-error-chan
                                      :internal/frame2 internal-frame-chan}
                     ::flow/out-ports {:internal/packet2 internal-packet-chan})))
    :transition (fn [state status]
@@ -1443,6 +1451,7 @@
                                                    (not= cid :packet)))
                 {:internal/packet2 [msg]}]
        :internal/ready-for-packet [(dissoc state ::flow/input-filter)]
+       :internal/error (throw msg)
        :internal/recycle2 [state
                            {::recycle-packet [msg]}]
        :internal/frame2 [state {:frame [msg]}]))})

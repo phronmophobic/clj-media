@@ -356,7 +356,7 @@
                              ready-frame-chan
                              out-frame-chan
                              recycle-frame-chan
-                             ]
+                             error-chan]
   (async/thread
    (try
      (loop [state {}
@@ -484,7 +484,8 @@
          (resample-close state)))
      (catch Throwable t
        (tap> t)
-       (prn t))
+       (prn t)
+       (async/put! error-chan t))
      (finally
        (println "exiting resample audio.")))))
 
@@ -506,17 +507,20 @@
            (let [internal-input-frame-chan (async/chan)
                  ready-for-frame-chan (async/chan 1)
                  internal-recycle-chan (async/chan 1)
-                 internal-output-frame-chan (async/chan 5)]
+                 internal-output-frame-chan (async/chan 5)
+                 internal-error-chan (async/chan 1)]
              (resample-audio-thread output-format
                                     internal-input-frame-chan
                                     fresh-frame-chan
                                     ready-for-frame-chan
                                     internal-output-frame-chan
-                                    internal-recycle-chan)
+                                    internal-recycle-chan
+                                    internal-error-chan)
              (assoc state
                     ::flow/in-ports {:internal/ready-for-frame ready-for-frame-chan
                                      :internal/output-frame internal-output-frame-chan
-                                     :internal/recycle internal-recycle-chan}
+                                     :internal/recycle internal-recycle-chan
+                                     :internal/error internal-error-chan}
                     ::flow/out-ports {:internal/input-frame internal-input-frame-chan})))
    :transition (fn [state status]
                  (if  (= status ::flow/stop)
@@ -536,6 +540,7 @@
        :internal/ready-for-frame [(dissoc state ::flow/input-filter)]
        :internal/recycle [state
                           {::impl.flow/recycle-frame [msg]}]
+       :internal/error (throw msg)
        :internal/output-frame [state {:out [msg]}]))})
 
 

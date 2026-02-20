@@ -183,7 +183,8 @@
                           ready-frame-chan
                           out-chan
                           eof-chan
-                          recycle-frame-chan]
+                          recycle-frame-chan
+                          error-chan]
   (let [port->idx (into {}
                         (map-indexed (fn [i ch]
                                        [ch i]))
@@ -310,7 +311,8 @@
                    (recur state output-frame)))))))
        (catch Throwable t
          (tap> t)
-         (prn t))
+         (prn t)
+         (async/put! error-chan t))
        (finally
          (run! async/close! in-chans)
          (async/close! ready-frame-chan)
@@ -383,7 +385,8 @@
                  internal-ready-for-frame-chan (async/chan 1)
                  internal-recycle-chan (async/chan 1)
                  internal-output-frame-chan (async/chan 5)
-                 internal-eof-chan (async/chan 1)]
+                 internal-eof-chan (async/chan 1)
+                 internal-error-chan (async/chan 1)]
              (filter-proc-thread filter-name
                                  opts
                                  (:output-format state)
@@ -392,7 +395,8 @@
                                  internal-ready-for-frame-chan
                                  internal-output-frame-chan
                                  internal-eof-chan
-                                 internal-recycle-chan)
+                                 internal-recycle-chan
+                                 internal-error-chan)
              (assoc state
                     :status :closed
                     :ready? true
@@ -401,7 +405,8 @@
                     ::flow/in-ports {:internal/ready-for-frame internal-ready-for-frame-chan
                                      :internal/output-frame internal-output-frame-chan
                                      :internal/recycle internal-recycle-chan
-                                     :internal/eof internal-eof-chan}
+                                     :internal/eof internal-eof-chan
+                                     :internal/error internal-error-chan}
                     ::flow/out-ports (zipmap (map second in->internal)  
                                              internal-in-chans))))
    :transition (fn [state status]
@@ -423,6 +428,7 @@
         :internal/ready-for-frame [(assoc state :ready? true)]
         :internal/recycle [state
                            {::impl.flow/recycle-frame [msg]}]
+        :internal/error (throw msg)
         :internal/output-frame [state {:out [msg]}]
         
         ;; else
