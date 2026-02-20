@@ -869,6 +869,7 @@
                 (catch Exception e
                   (prn e))
                 (finally
+                  (prn "quiting frame recycler.")
                   ;; make sure fresh-frame-chan is closed
                   ;; (loop []
                   ;;   (when-let [_ (async/<! fresh-frame-chan)]
