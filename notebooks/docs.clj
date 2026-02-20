@@ -177,7 +177,7 @@ encoded --> output.mp4
 ;; ## Dependency
 
 ;; ```clojure
-;; com.phronemophobic/clj-media {:mvn/version "3.0-alpha"}
+;; com.phronemophobic/clj-media {:mvn/version "3.0-alpha1"}
 ;; ```
 
 ;; ### Linux dependencies

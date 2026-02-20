@@ -8,7 +8,7 @@ Powered by [FFmpeg](https://ffmpeg.org/) and [clong](https://github.com/phronmop
 ## Dependency
 
 ```clojure
-com.phronemophobic/clj-media {:mvn/version "3.0-alpha"}
+com.phronemophobic/clj-media {:mvn/version "3.0-alpha1"}
 ```
 
 ## Documentation
@@ -38,7 +38,7 @@ Example alias:
 {:aliases
  {:local-ffmpeg
   {:jvm-opts ["-Djna.library.path=/path/to/FFmpeg/build/lib"]
-   :deps {com.phronemophobic/clj-media {:mvn/version "3.0-alpha"
+   :deps {com.phronemophobic/clj-media {:mvn/version "3.0-alpha1"
                                         :exclusions [org.bytedeco/ffmpeg-platform]}}}}}
 ```
 
