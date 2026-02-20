@@ -2506,12 +2506,20 @@
               (add-frame-recycler)
               (add-packet-recycler))
         flow (flow/create-flow g)
-        _ (-> flow flow/start monitoring)]
+        {:keys [error-chan report-chan]} (flow/start flow)]
     (track-flow flow)
-    (flow/resume flow)
-    (async/<!! done-chan)
-    
-    (flow/stop flow)
+    (try
+      (flow/resume flow)
+      (async/alt!!
+       error-chan ([v]
+                   (let [ex (::flow/ex v)]
+                     (throw (ex-info "Error writing media "
+                                     {}
+                                     ex))))
+       done-chan ([_]))
+      
+      (finally
+        (flow/stop flow)))
     
     nil))
 
@@ -2658,30 +2666,37 @@
                   
                   
                   flow (flow/create-flow g)
-                  _ (-> flow flow/start monitoring)
-                  
-                  
-                  ]
+                  {:keys [report-chan error-chan]} (flow/start flow)]
               (track-flow flow)
-              (flow/resume flow)
+              (try
+                (flow/resume flow)
               
-              (let [
-                    wrap-frame (case media-type
-                                 :media-type/audio impl.model/->AudioFrame
-                                 :media-type/video impl.model/->VideoFrame)
-                    result (loop [result init]
-                             (if-let [frame (async/<!! frame-chan)]
-                               (let [frame* (volatile! frame)
-                                     wrapped-frame (wrap-frame frame*)
-                                     result (f result wrapped-frame)]
-                                 (vreset! frame* nil)
-                                 (async/put! recycle-frame-chan frame)
-                                 (if (reduced? result)
-                                   @result
-                                   (recur result)))
-                               result))]
-                (flow/stop flow)
-                result)))))
+                (let [wrap-frame (case media-type
+                                   :media-type/audio impl.model/->AudioFrame
+                                   :media-type/video impl.model/->VideoFrame)
+                      result (loop [result init]
+                               (async/alt!!
+                                report-chan ([v] (recur result))
+                                error-chan ([v]
+                                            (let [ex (::flow/ex v)]
+                                              (throw (ex-info "Error producing frames"
+                                                              {}
+                                                              ex))))
+                                frame-chan
+                                ([frame]
+                                 (if frame 
+                                   (let [frame* (volatile! frame)
+                                         wrapped-frame (wrap-frame frame*)
+                                         result (f result wrapped-frame)]
+                                     (vreset! frame* nil)
+                                     (async/put! recycle-frame-chan frame)
+                                     (if (reduced? result)
+                                       @result
+                                       (recur result)))
+                                   result))))]
+                  result)
+                (finally
+                  (flow/stop flow)))))))
 
 
 
