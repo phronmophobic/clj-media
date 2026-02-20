@@ -228,7 +228,7 @@
                    
                    ;; write frame
                    (av_buffersrc_write_frame buffer-context input-frame)
-                   (async/put! recycle-frame-chan input-frame)
+                   (async/>!! recycle-frame-chan input-frame)
                    
                    ;; try to get next frame
                    (let [[state output-frame] 
