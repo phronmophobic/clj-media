@@ -34,15 +34,11 @@
 (defn filter-state-init [state filter-name input-formats output-format opts]
   (let [filter-graph (avfilter_graph_alloc)
         
-        output-format (merge (first input-formats)
-                             output-format)
-        
-        media-type (:media-type output-format)
-        
         input-contexts
         (into []
               (map (fn [input-format]
-                     (let [buffer (avfilter_get_by_name (dt-ffi/string->c
+                     (let [media-type (:media-type input-format)
+                           buffer (avfilter_get_by_name (dt-ffi/string->c
                                                          (case media-type
                                                            :media-type/audio "abuffer"
                                                            :media-type/video "buffer")))
@@ -73,6 +69,9 @@
                      ))
               input-formats)
         
+        ;; todo: media-type should probably come from avfilter metadata
+        media-type (or (:media-type output-format)
+                       (:media-type (first input-formats)))
         buffersink (avfilter_get_by_name (dt-ffi/string->c
                                           (case media-type
                                             :media-type/audio "abuffersink"
@@ -89,27 +88,26 @@
         
         buffersink-context (first buffersink-context*)
         
-        ;; sample-fmts (doto (IntByReference.)
-        ;;               (.setValue (:sample-format (first input-formats))))
-        _ (case media-type
-            :media-type/audio
-            (let [sample-fmts (dt-ffi/make-ptr :int32 (:sample-format output-format)) ]
-              (av_opt_set buffersink-context
-                          (dt-ffi/string->c "ch_layouts") 
-                          (dt-ffi/string->c (datafy-media/ch-layout->str (:ch-layout output-format)))
-                          AV_OPT_SEARCH_CHILDREN)
-              (av_opt_set_bin buffersink-context (dt-ffi/string->c "sample_fmts")
-                              sample-fmts
-                              (* 1 4)
-                              AV_OPT_SEARCH_CHILDREN))
-            
-            :media-type/video
-            (let [pix-fmts (dt-ffi/make-ptr
-                            :pointer (:pixel-format output-format))]
-              (av_opt_set_bin buffersink-context (dt-ffi/string->c "pix_fmts")
-                              pix-fmts
-                              (* 1 4)
-                              AV_OPT_SEARCH_CHILDREN)))
+        _ (when output-format
+            (case media-type
+              :media-type/audio
+              (let [sample-fmts (dt-ffi/make-ptr :int32 (:sample-format output-format)) ]
+                (av_opt_set buffersink-context
+                            (dt-ffi/string->c "ch_layouts") 
+                            (dt-ffi/string->c (datafy-media/ch-layout->str (:ch-layout output-format)))
+                            AV_OPT_SEARCH_CHILDREN)
+                (av_opt_set_bin buffersink-context (dt-ffi/string->c "sample_fmts")
+                                sample-fmts
+                                (* 1 4)
+                                AV_OPT_SEARCH_CHILDREN))
+              
+              :media-type/video
+              (let [pix-fmts (dt-ffi/make-ptr
+                              :pointer (:pixel-format output-format))]
+                (av_opt_set_bin buffersink-context (dt-ffi/string->c "pix_fmts")
+                                pix-fmts
+                                (* 1 4)
+                                AV_OPT_SEARCH_CHILDREN))))
         
         ;; create the filter
         filter-context (avfilter_graph_alloc_filter
