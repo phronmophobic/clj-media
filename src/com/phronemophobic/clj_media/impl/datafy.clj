@@ -750,7 +750,11 @@
    (av_opt_set_video_rate o k ratio AV_OPT_SEARCH_CHILDREN)))
 (defmethod set-option :avoption-type/string
   [o _ k v]
-  (av_opt_set o (dt-ffi/string->c k) (dt-ffi/string->c v) AV_OPT_SEARCH_CHILDREN))
+  (let [v (if (or (integer? v)
+                  (float? v))
+            (str v)
+            v)]
+    (av_opt_set o (dt-ffi/string->c k) (dt-ffi/string->c v) AV_OPT_SEARCH_CHILDREN)))
 #_(defmethod set-option :avoption-type/const
   [o _ k v])
 (defmethod set-option :avoption-type/sample-fmt
