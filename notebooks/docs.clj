@@ -70,7 +70,8 @@
                   :preload "none"
                   :src (str media-prefix path#)}])
         
-        (str/ends-with? path# ".mp3")
+        (or (str/ends-with? path# ".mp3")
+            (str/ends-with? path# ".wav"))
         (clerk/html
          [:audio {:controls "1"
                   :preload "none"
@@ -530,7 +531,51 @@ encoded --> output.mp4
         "my-fade-in-out.mp4")
 
 
+;; ## Transcoding
+;; By default, clj-media will not change audio/video formats if it is not required. However, if a file format does not allow the input format, clj-media will pick a suitable format.
+;; clj-media accepts an optional third parameter, `opts`. In `opts`, you can specify an optional `:audio-format` or `:video-format`. 
 
+(write! (clj-media/file "media/birds.mp4")
+        "transcoded.mp4"
+        {;; mp3
+         :audio-format {:codec {:id 86017}}
+         ;; h265
+         :video-format {:codec {:id 173}}})
+
+;; use a specific pixel format
+
+(write! (clj-media/file "my-gif.gif")
+        "my-other-gif.gif"
+        {:video-format {:sample-format :sample-format/gray8}})
+
+;; use a specific sample format and channel layout
+
+(write! (clj-media/file "my-copy.mp3")
+        "my-other-copy.wav"
+        {:audio-format {:channel-layout "stereo"
+                        :sample-format :sample-format/s16}})
+
+
+;; ## Fast Trimming
+
+;; Media files can be truncated by specifying `:start-timestamp` and `:end-timestamp` as options to clj-media/file.
+;; However, packet timestamps are rough and more accurate filtering can be accomplished by filtering
+;; frame timestamps using something like `avfilter/trim+`.
+;; When filtering using frame timestamps, `:end-timestamp` is unnecessary and may even make trimming less exact.  
+;; Note that using `:start-timestamp` along with `avfilter/trim+` can be much, much faster
+;; than using `avfilter/trim+` on its own.
+
+;; Also, notice that `:start-timestamp` and `:end-timestamp` are in seconds while `avfilter/trim+`'s units
+;; are in microseconds.
+
+(write! (->> (clj-media/file "media/birds.mp4"
+                             {:start-timestamp 1})
+             (avfilter/trim+ {:start 1e6
+                              :end 2e6}))
+        "fast-truncate.mp4")
+
+
+;; 
 
 ;; # Media Data
 
