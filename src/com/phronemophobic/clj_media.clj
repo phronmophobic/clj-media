@@ -142,10 +142,22 @@
   "Returns media with the contents of the file `f`.
 
   `f` should be a value that can be coerced to a file via
-      clojure.java.io/file."
-  [f]
-  {:file f
-   :type :file})
+      clojure.java.io/file.
+  
+  `opts` a map of extra info. Supported keys:
+  `:start-timestamp`: A timestamp (in seconds) to seek to before reading packets.
+  `:end-timestamp`: A timestamp (in seconds) to stop reading packets. This option is not usually necessary when used alongside frame filtering.
+  
+  Note: packet timestamps are fairly rough. Trimming is most accurate when
+  `:start-timestamp` is combined with a frame level filtering
+  using something like avfilter/trim+."
+  ([f]
+   {:file f
+    :type :file})
+  ([f {:keys [start-timestmap end-timestamp] :as opts}]
+   (merge {:file f
+           :type :file}
+          opts)))
 
 
 (defn probe
