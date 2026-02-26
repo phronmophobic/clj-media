@@ -20,7 +20,6 @@
             [tech.v3.datatype.casting :as dt-casting])
   (:import java.util.Map))
 
-(def my-filter-name "aecho")
 (def media-fname "../clj-media/my-fade-in-out.mp4")
 
 (defn prn [& args]
@@ -1248,7 +1247,6 @@
                                           (let [packet-dts (/ (* (:dts packet) (:num tb))
                                                               (:den tb))]
                                             (> packet-dts end-timestamp))))
-
                                  outs (cond 
                                         valid?
                                         {:packet [{:type :new-packet
