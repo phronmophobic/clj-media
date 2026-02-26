@@ -251,10 +251,6 @@ encoded --> output.mp4
 ;; `frames` can consume lots of resources. Returning a reducible
 ;; allows clj-media to handle all of the resource management for you.
 
-;; _Note: there are is still ongoing work on resource management
-;; and memory usage. However, improvements can be made without
-;; changing or breaking the higher level API._
-
 ;; ### Obtaining the first frame
 
 ^{:nextjournal.clerk/visibility {:code :show :result :show}}
@@ -463,9 +459,7 @@ encoded --> output.mp4
      :video
      {:format (clj-media/video-format
                {:pixel-format
-                ;;:pixel-format/rgb565le
-                :pixel-format/rgb24
-                })}))))
+                :pixel-format/rgb24})}))))
 
 ;; ## Cropping Videos
 (write! (->> (clj-media/file "media/birds.mp4")
@@ -563,13 +557,13 @@ encoded --> output.mp4
          ;; vp9
          :video-format {:codec {:id 167}}})
 
-;; use a specific pixel format
+;; ## Transcode to a specific pixel format
 
 (write! (clj-media/file "my-gif.gif")
         "my-other-gif.gif"
         {:video-format {:pixel-format :pixel-format/gray8}})
 
-;; use a specific sample format and channel layout
+;; ## Transcode to a specific sample format and channel layout
 
 (write! (clj-media/file "my-copy.mp3")
         "my-other-copy.wav"
