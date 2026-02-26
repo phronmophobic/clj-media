@@ -39,7 +39,9 @@
                :source-uri "https://github.com/phronmophobic/clj-media/blob/main/{filepath}#L{line}"
                :namespaces [com.phronemophobic.clj-media
                             com.phronemophobic.clj-media.model
-                            com.phronemophobic.clj-media.avfilter]}}
+                            com.phronemophobic.clj-media.avfilter
+                            com.phronemophobic.clj-media.java2d
+                            com.phronemophobic.clj-media.gif]}}
 
 
   :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.12" :git/sha "97c5562"}
