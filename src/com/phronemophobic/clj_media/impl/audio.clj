@@ -306,7 +306,8 @@
         _ (assert (pos? bytes-per-sample))
         ;; should maybe check for AV_CODEC_CAP_VARIABLE_FRAME_SIZE?
         output-frame-size (:frame-size output-format)
-        _ (assert output-frame-size)]
+
+        _ (assert (and output-frame-size (pos? output-frame-size)))]
     (assoc state
            :output-frame-size output-frame-size
            :sample-offset-multiplier sample-offset-multiplier
@@ -379,6 +380,12 @@
                    
                    frame-size (async/<!! frame-size-chan)
                    _ (prn "received the frame size" frame-size)
+                   ;; some encoders don't suggest a frame size
+                   ;; like .wav
+                   frame-size (if (zero? frame-size)
+                                1024
+                                frame-size)
+
                    output-format (-> (merge (:format msg)
                                             output-format)
                                      (assoc :frame-size frame-size))
