@@ -18,7 +18,7 @@ com.phronemophobic/clj-media {:mvn/version "3.0-alpha.1"}
 
 ## Locally compiled FFmpeg
 
-clj-media also supports using a locally compiled FFmpeg build.
+clj-media also supports using a locally compiled FFmpeg build. It is recommended to use the same major version of FFMpeg as the version clj-media targets.
 
 Example compilation:
 ```bash
@@ -55,6 +55,12 @@ Features get added as time and motivation allows. If you would be excited to see
 - [ ] Add iterator+autocloseable to frames interface.
 - [ ] Support transformation specification by copy and pasting ffmpeg commands.
 - [X] Add support for creating media from byte buffers.
+- [ ] Add high level API that is more idiomatic than wrapping avfilters
+- [ ] Add media player
+- [ ] Improve codec defaults?
+- [ ] Improve exceptions
+- [ ] Support Thread/isInterrupted
+- [ ] Support explicit file format (ie. AVFormat) in clj-media/write!
 
 ## Status
 
