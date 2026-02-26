@@ -2554,7 +2554,7 @@
               (add-packet-recycler))
         flow (flow/create-flow g)
         {:keys [error-chan report-chan]} (flow/start flow)]
-    (track-flow flow)
+    ;; (track-flow flow)
     (try
       (flow/resume flow)
       (async/alt!!
@@ -2714,7 +2714,7 @@
                   
                   flow (flow/create-flow g)
                   {:keys [report-chan error-chan]} (flow/start flow)]
-              (track-flow flow)
+              ;; (track-flow flow)
               (try
                 (flow/resume flow)
               
