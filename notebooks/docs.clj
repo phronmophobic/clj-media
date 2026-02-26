@@ -546,7 +546,7 @@ encoded --> output.mp4
 
 (write! (clj-media/file "my-gif.gif")
         "my-other-gif.gif"
-        {:video-format {:sample-format :sample-format/gray8}})
+        {:video-format {:pixel-format :pixel-format/gray8}})
 
 ;; use a specific sample format and channel layout
 
