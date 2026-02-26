@@ -404,6 +404,13 @@
    AVMEDIA_TYPE_UNKNOWN    :media-type/unknown
    AVMEDIA_TYPE_VIDEO      :media-type/video})
 
+(def kw->media-type
+  (into
+   {}
+   (map (fn [[k v]]
+          [v k]))
+   media-type->kw))
+
 (def pixel-format->kw
   (->> (:enums raw/av-api)
        (filter (fn [enum]
