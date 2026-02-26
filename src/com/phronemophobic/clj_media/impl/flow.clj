@@ -2178,58 +2178,77 @@
                           :packet (doto (:packet msg)
                                     (Map/.put :stream_index stream-index))}]}])))}))
 
-(defn guess-frame-format [codec-id]
-  (let [codec-struct (dt-ffi/ptr->struct
+(defn guess-frame-format [encoder-info]
+  (let [codec-id (-> encoder-info :codec :id)
+        codec-struct (dt-ffi/ptr->struct
                            :AVCodec
                            (raw/avcodec_find_encoder codec-id))
         codec (-> codec-struct
-                  (media.datafy/codec->map)) ]
+                  (media.datafy/codec->map))]
     (case (:media-type codec)
       :media-type/audio
-      
       (merge
-       (let [sample-rate (first (:sample-rates codec))]
+       (let [sample-rate (or (:sample-rate encoder-info)
+                             (first (:sample-rates codec)))]
          {:sample-rate (or sample-rate 44100)})
-       (when-let [sample-format (first (:sample-formats codec))]
+       (when-let [sample-format (or (:sample-format encoder-info)
+                                    (first (:sample-formats codec)))]
          {:sample-format sample-format})
-       (let [channel-layout (first (:channel-layouts codec))]
-         {:channel-layout (or (:name channel-layout)
+       (let [channel-layout (or (:channel-layout encoder-info)
+                                (:name (first (:channel-layouts codec))))]
+         {:channel-layout (or channel-layout
                               "mono")})
        {:media-type :media-type/audio
         :codec {:id codec-id}})
       
       :media-type/video
       (merge 
-       (when-let [pix-fmt (first (:pixel-formats codec))]
+       (when-let [pix-fmt (or (:pixel-format encoder-info)
+                              (first (:pixel-formats codec)))]
          {:pixel-format pix-fmt})
+       (when-let [gop-size (:gop-size encoder-info)]
+         {:gop-size gop-size})
        {:media-type :media-type/video
         :codec {:id codec-id}}))))
 
 ;; This is a fairly naive approach. However, it's not totally clear what the recommended approach is. This needs more research.
 (defn output-format-supported?
-  [codec-map output-format]
+  [codec-map current-format wanted-format]
   (case (:media-type codec-map)
     :media-type/audio
     
-    (let [{:keys [sample-format sample-rate frame-size ch-layout]} output-format
+    (let [{:keys [sample-format sample-rate frame-size ch-layout]} current-format
+          
+          current-format {:sample-format (media.datafy/sample-format->kw sample-format)
+                          :channel-layout (media.datafy/ch-layout->str ch-layout)
+                          :sample-rate sample-rate}
           {:keys [sample-formats sample-rates channel-layouts ]} codec-map]
       
-      (and (or (not sample-formats)
+      ;; todo: check codec layouts
+      (and (not
+            (some (fn [k]
+                    (when-let [wanted-value (get wanted-format k)]
+                      (not= wanted-value (get current-format k))))
+                  [:sample-rate :sample-format :channel-layout]))
+           (or (not sample-formats)
                (some #{(media.datafy/sample-format->kw sample-format)}
                      sample-formats))
            (or (not sample-rates)
                (not sample-rate)
-               (some #{sample-rate} sample-rates))
-           ;; todo: check layouts
-           )
-      )
+               (some #{sample-rate} sample-rates))))
     
     :media-type/video
-    (let [{:keys [pixel-format]} output-format
+    (let [{:keys [pixel-format]} current-format
+          current-format {:pixel-format (media.datafy/pixel-format->kw pixel-format)}
           {:keys [pixel-formats]} codec-map]
-      (or (not pixel-formats)
-          (some #{(media.datafy/pixel-format->kw pixel-format)} 
-                pixel-formats)))))
+      (and (not
+            (some (fn [k]
+                    (when-let [wanted-value (get wanted-format k)]
+                      (not= wanted-value (get current-format k))))
+                  [:pixel-format :gop-size]))
+           (or (not pixel-formats)
+               (some #{(media.datafy/pixel-format->kw pixel-format)} 
+                     pixel-formats))))))
 
 (defn auto-encode-frame
   "Returns a flow with `:in-coord` and `:out-coord.
@@ -2254,8 +2273,8 @@
                                                      :codec :id)))
                       (media.datafy/codec->map))
         
-        output-format (guess-frame-format (-> encoder-info
-                                              :codec :id))
+        output-format (guess-frame-format encoder-info)
+
         g {:procs {router-pid {:proc (flow/process
                                       (flow/map->step
                                        {:describe (fn []
@@ -2273,7 +2292,7 @@
                                                     _ (prn "chekcing supported format"
                                                            format
                                                            codec-map)
-                                                    out (if (output-format-supported? codec-map format)
+                                                    out (if (output-format-supported? codec-map format encoder-info)
                                                           :passthru
                                                           :reencode)
                                                     state (assoc state :out out)]
@@ -2312,6 +2331,30 @@
                    [[resampler-pid :out] [encoder-pid :in]]]}]
     g))
 
+
+(defn should-reencode-packet [wanted-format codec-parameters]
+  (or (when-let [codec-id (-> wanted-format :codec :id)]
+        (not= codec-id
+              (:codec_id codec-parameters)))
+      (condp = (:codec_type codec-parameters)
+        raw/AVMEDIA_TYPE_AUDIO
+        (or (when-let [sample-format (:sample-format wanted-format)]
+              (not= (:format codec-parameters)
+                    (media.datafy/kw->sample-format sample-format)))
+            (when-let [sample-rate (:sample-rate wanted-format)]
+              (not= (:sample_rate codec-parameters)
+                    sample-rate))
+            (when-let [channel-layout (:channel-layout wanted-format)]
+              (not (zero? (raw/av_channel_layout_compare
+                           (media.datafy/str->ch-layout channel-layout)
+                           (:ch_layout codec-parameters))))))
+        
+        raw/AVMEDIA_TYPE_VIDEO
+        (or (:gop-size wanted-format)
+            (when-let [pixel-format (:pixel-format wanted-format)]
+              (not= (media.datafy/kw->pixel-format pixel-format)
+                    (:format codec-parameters)))))))
+
 (defn auto-encode-packet
   "Returns a flow with `:in-coord` and `:out-coord.
   
@@ -2329,8 +2372,7 @@
         auto-encode-frame-flow (auto-encode-frame avformat media-type encoder-info)
         output-pid (gen-pid "output")
         
-        output-format (guess-frame-format (-> encoder-info
-                                              :codec :id))
+        output-format (guess-frame-format encoder-info)
         _ (prn output-format)
         g (merge-flows
            auto-encode-frame-flow
@@ -2353,9 +2395,10 @@
                                                                          {:msg msg})))
                                                      {:keys [codec-parameters]} (first streams)
                                                      
-                                                     out (if (= 1
-                                                                (raw/avformat_query_codec avformat (:codec_id codec-parameters)
-                                                                                          raw/FF_COMPLIANCE_NORMAL))
+                                                     out (if (and (= 1 (raw/avformat_query_codec avformat (:codec_id codec-parameters)
+                                                                                                 raw/FF_COMPLIANCE_NORMAL))
+                                                                  (not (should-reencode-packet encoder-info
+                                                                                               codec-parameters)))
                                                            :passthru
                                                            :reencode)
                                                      state (assoc state :out out)]
@@ -2364,20 +2407,6 @@
                     decoder-pid {:proc (-> (packet->frames)
                                            flow/map->step
                                            flow/process)}
-                    
-                    ;; transcode-pid {:proc (-> (avfilter/filter-proc [[:in ""]])
-                    ;;                          flow/map->step
-                    ;;                          flow/process)
-                    ;;                :args {:filter-name (case media-type
-                    ;;                                      :media-type/audio "anull"
-                    ;;                                      :media-type/video "null")
-                    ;;                       :output-format 
-                    ;;                       (media.datafy/map->format output-format)}}
-                    
-                    ;; encoder-pid {:proc (-> (frame-encoder-proc [[:in ""]])
-                    ;;                        flow/map->step
-                    ;;                        flow/process)
-                    ;;              :args {:encoders {:in encoder-info}}}
                     
                     output-pid {:proc (flow/process
                                        (flow/lift1->step identity))}}
@@ -2406,16 +2435,6 @@
   "
   [g avformat encoders]
   (let [
-        ;; frame-format-coord? (fn [[format coord]]
-        ;;                       (= :frame (:container-type format)))
-        ;; frame-format-coords (into []
-        ;;                           (filter frame-format-coord?)
-        ;;                           (:format->coord g))
-        ;; g (assoc g
-        ;;          :format->coord (into {}
-        ;;                               (remove frame-format-coord?)
-        ;;                               (:format->coord g)))
-        
         g (reduce (fn [g [format coord]]
                     
                     (let [auto-encoder (case (:container-type format)
@@ -2445,21 +2464,42 @@
         guessed-format (raw/av_guess_format nil
                                             (dt-ffi/string->c filename)
                                             nil)
-
-        ;; default to h264 for mp4
+        ;; default to h264 for mp4 and mov
         ;; I think this is what the ffmpeg cli does
-        video-encoder-info (if (= "mp4"
-                                  (dt-ffi/c->string (:name guessed-format)))
-                             {:codec {:id 27} :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER}
-                             {:codec {:id (:video_codec guessed-format)}
-                              ;; I had trouble just using the suggested flags
-                              ;; examples explicitly check for this flag
-                              ;; but I'm not sure why
-                              :flags (bit-and (:flags guessed-format)
-                                              raw/AV_CODEC_FLAG_GLOBAL_HEADER)})
-        audio-encoder-info {:codec {:id (:audio_codec guessed-format)}
-                            :flags (bit-and (:flags guessed-format)
-                                            raw/AV_CODEC_FLAG_GLOBAL_HEADER)}
+        video-encoder-info (if-let [codec (-> file-info
+                                              :video-format
+                                              :codec)]
+                             (merge (:video-format file-info)
+                                    {:codec codec
+                                     :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER})
+                             ;; else
+                             (if (#{"mp4" "mov"}
+                                    (dt-ffi/c->string (:name guessed-format)))
+                               (merge (:video-format file-info)
+                                      {:codec {:id 27} :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER})
+                               
+                               (merge (:video-format file-info)
+                                      {:codec {:id (:video_codec guessed-format)}
+                                       ;; I had trouble just using the suggested flags
+                                       ;; examples explicitly check for this flag
+                                       ;; but I'm not sure why
+                                       :flags (bit-and (:flags guessed-format)
+                                                       raw/AV_CODEC_FLAG_GLOBAL_HEADER)})))
+        
+
+        audio-encoder-info (if-let [codec (-> file-info
+                                              :audio-format
+                                              :codec)]
+                             
+                             (merge (:audio-format file-info)
+                                    {:codec codec
+                                     :flags raw/AV_CODEC_FLAG_GLOBAL_HEADER})
+                             ;; else
+                             
+                             (merge (:audio-format file-info)
+                                    {:codec {:id (:audio_codec guessed-format)}
+                                     :flags (bit-and (:flags guessed-format)
+                                                     raw/AV_CODEC_FLAG_GLOBAL_HEADER)}))
         
         packet-flow (encode-all (->file-flow media)
                                 guessed-format
