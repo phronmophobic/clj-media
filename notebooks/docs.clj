@@ -539,8 +539,8 @@ encoded --> output.mp4
         "transcoded.mp4"
         {;; mp3
          :audio-format {:codec {:id 86017}}
-         ;; h265
-         :video-format {:codec {:id 173}}})
+         ;; vp9
+         :video-format {:codec {:id 167}}})
 
 ;; use a specific pixel format
 
