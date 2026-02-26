@@ -530,6 +530,27 @@ encoded --> output.mp4
                                 :type "out"}))))
         "my-fade-in-out.mp4")
 
+;; ## Resizing
+
+;; Resizing can be done using the scale filter. See [ffmpeg scale docs](https://ffmpeg.org/ffmpeg-filters.html#scale-1) for more info.
+
+;; ### Aspect resize to 100px wide 
+
+(write! 
+ (avfilter/scale
+  {:w "100"
+   :h "-1"}
+  (clj-media/file "media/birds.mp4"))
+ "one-hundred-wide.mp4")
+
+;; ### Resize using a formula 
+  
+(write! 
+ (avfilter/scale
+  {:w "iw*1.5"
+   :h "ih/2"}
+  (clj-media/file "media/birds.mp4"))
+ "stretched-wide.mp4")
 
 ;; ## Transcoding
 ;; By default, clj-media will not change audio/video formats if it is not required. However, if a file format does not allow the input format, clj-media will pick a suitable format.
