@@ -90,8 +90,10 @@
   ([media dest]
    (write! media dest nil))
   ([media dest opts]
-   (impl.flow/write-file! media 
-                          {:filename dest})))
+   (impl.flow/write-file! media
+                          (merge
+                           opts
+                           {:filename dest}))))
 
 
 (defn filter-video
