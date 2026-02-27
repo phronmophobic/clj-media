@@ -2,7 +2,7 @@
   (:require [com.phronemophobic.clj-media :as clj-media]
             [com.phronemophobic.clj-media.avfilter :as avfilter]))
 
-(defn save-gif!
+(defn write-gif!
   "Write a gif to `fname` with contents of `media`.
 
   `media` can be any valid media.
@@ -13,7 +13,7 @@
   `:max-colors` Set the maximum number of colors to use in the palette. default 256.
   `:alpha-threshold` Alpha cutoff for transparency. default 128."
   ([media fname]
-   (save-gif! media fname {}))
+   (write-gif! media fname {}))
   ([media fname {:keys [dither
                         transparent?
                         max-colors
