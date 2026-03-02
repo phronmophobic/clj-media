@@ -61,6 +61,7 @@ Features get added as time and motivation allows. If you would be excited to see
 - [ ] Improve exceptions
 - [ ] Support Thread/isInterrupted
 - [ ] Support explicit file format (ie. AVFormat) in clj-media/write!
+- [ ] Support for streaming with HLS and/or SRT?
 
 ## Status
 
