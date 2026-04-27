@@ -1702,7 +1702,7 @@
                                                [(assoc stream :container-type :packet)
                                                 [packet-splitter-pid (outkw i)]]))
                                 streams)}
-        g (merge-flows packet-flow
+        g (merge-flows (dissoc packet-flow :out-coord)
                        g)]
     g))
 
