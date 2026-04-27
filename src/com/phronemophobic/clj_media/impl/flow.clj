@@ -2316,9 +2316,6 @@
                                               (throw (ex-info "Expected stream open as first message"
                                                               {:msg msg}))
                                               (let [format (:format msg)
-                                                    _ (prn "chekcing supported format"
-                                                           format
-                                                           codec-map)
                                                     out (if (output-format-supported? codec-map format encoder-info)
                                                           :passthru
                                                           :reencode)
