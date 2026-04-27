@@ -1136,21 +1136,22 @@
       (dissoc state :format-context))
     state))
 
+(defn file-packet-flow-seek [state {:keys [timestamp percent]}]
+  (when timestamp
+    (let [ts (long (/ timestamp raw/AV_TIME_BASE))
+          err (raw/avformat_seek_file (:format-context state) -1 Long/MIN_VALUE ts Long/MAX_VALUE 0)]
+      (when (neg? err)
+        (throw (ex-info "Error seeking file "
+                        {:error-code err
+                         :error-msg (av/error->str err)
+                         :start-timestamp timestamp
+                         :ts ts})))))
+  state)
+
 (defn file-packet-flow-init-context [state fname]
   (assert (nil? (:format-context state)))
   (let [format-context (av/open-context fname)]
     (find-stream-info* format-context)
-
-    (when-let [start-timestamp (:start-timestamp state)]
-      (let [ts (long (/ start-timestamp raw/AV_TIME_BASE))
-            err (raw/avformat_seek_file format-context -1 Long/MIN_VALUE ts Long/MAX_VALUE 0)]
-        (when (neg? err)
-          (throw (ex-info "Error seeking file "
-                          {:error-code err
-                           :error-msg (av/error->str err)
-                           :start-timestamp start-timestamp
-                           :ts ts})))))
-
     (assoc state :format-context format-context)))
 
 (defn file-packet-flow-ban [state cid]
@@ -1177,6 +1178,16 @@
                   (file-packet-flow-unban state :fresh-packet))]
       [state outs])))
 
+
+;; seeking is half-baked
+;; currently, sending a message to the ::seek port will try its best
+;; implementing seek position :percent. should implement :timestamp in the future
+;; not all media files have a duration that is easy to query
+;; avformat_seek_file requires a timestamp, so :percent needs to computed based on duration
+;;   info from streams.
+;; seeking currently ignores avformat_seek_file flags related to precision and key frames
+;;   we should probably have some good defaults for common seeking use cases that 
+;;   take into the various considerations when seeking (eg. key frames, file types, etc)
 (defn file->packets-proc
   "Like file->packets-proc, but file is set via param."
   []
@@ -1186,6 +1197,7 @@
                  :params {::fresh-packet-chan "Channel to acquire fresh packets."
                           :filename "File to start decoding"
                           :start-timestamp "start producing packets from this ts"
+                          :start-percent "start producing packets from this point as a percent of the full duration"
                           :end-timestamp "stop producing packets at this ts."}
                  :outs {:packet "Packets from file."}})
     :init (fn [{::keys [fresh-packet-chan] :as state}]
@@ -1308,7 +1320,20 @@
                                       (map-indexed (fn [i stream]
                                                      [i (:time_base stream)]))
                                       streams)
-                 state (assoc state :idx->time_base idx->time_base)]
+                 state (assoc state :idx->time_base idx->time_base)
+                 state (if-let [timestamp (:start-timestamp state)]
+                         (file-packet-flow-seek state {:timestamp timestamp})
+                         (if-let [percent (:start-percent state)]
+                           (let [max-duration (transduce (map (fn [{:keys [duration time_base]}]
+                                                                (let [{:keys [num den]} time_base]
+                                                                  (* duration (/ num den)))))
+                                                         (completing max)
+                                                         0
+                                                         (rest streams))
+                                 timestamp (* percent max-duration)]
+                             (file-packet-flow-seek state {:timestamp timestamp}))
+                           ;; else
+                           state))]
              [state
               {:packet 
                [{:type :stream-opened
@@ -1601,6 +1626,8 @@
                                        {:filename (java.io.File/.getPath file)}
                                        (when-let [start-timestamp (:start-timestamp media)]
                                          {:start-timestamp start-timestamp})
+                                       (when-let [start-percent (:start-percent media)]
+                                         {:start-percent start-percent})
                                        (when-let [end-timestamp (:end-timestamp media)]
                                          {:end-timestamp end-timestamp}))}}
            :out-coord [media-packets-pid :packet]}]
