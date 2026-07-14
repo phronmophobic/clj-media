@@ -3,6 +3,9 @@
             [membrane.component :as component
              :refer [defui defeffect]]
             [membrane.skia :as skia]
+            [tech.v3.datatype :as dt]
+            [tech.v3.datatype.native-buffer :as native-buffer]
+            [com.phronemophobic.clj-media.impl.datafy :as media.datafy]
             [com.phronemophobic.clj-media :as clj-media]
             [com.phronemophobic.clj-media.impl.av :as av]
             [com.phronemophobic.clj-media.impl.video :as video]
@@ -55,6 +58,35 @@
     (locking draw-lock
       (when resource
         (skia_draw_surface skia/*skia-resource* resource)))))
+
+
+
+
+(defn frame->pixformat [frame]
+  (let [{:keys [width height linesize data format]} frame
+        _ (when (neg? linesize)
+            (throw (ex-info "Only frames with positive line size supported."
+                            {:frame frame
+                             :linesize linesize})))
+        buf-size (* linesize height)
+        buf (dt/->byte-array
+             (native-buffer/wrap-address (first data)
+                                         buf-size))
+        skia-pixel-format (case (:format frame)
+                            ;; (media.datafy/kw->pixel-format :pixel-format/bgra)
+                            28 membrane.skia/kBGRA_8888_SkColorType
+                            
+                            ;; else
+                            (throw (ex-info "Unsupported pixel format"
+                                            {:pixel-format (media.datafy/pixel-format->kw (:format frame))
+                                             :frame frame})))]
+    (skia/pixmap (:pts frame)
+                 (dt/->byte-array
+                  (native-buffer/wrap-address (first data)
+                                              buf-size))
+                 width height skia-pixel-format
+                 membrane.skia/kOpaque_SkAlphaType 
+                 linesize)))
 
 (defn draw-frame [resource frame]
   (let [width (.readField frame "width")
@@ -324,3 +356,66 @@
   
 
   ,)
+
+
+(defn test-main [& args]
+  (let [uuid (random-uuid)
+        next-int (let [atm (atom 0)]
+                   (fn []
+                     (swap! atm inc)))]
+    (time
+     (run! (fn [frame]
+            (prn (:pts frame))
+            
+            (let [linesize (-> frame :linesize first)
+                  width (:width frame)
+                  height (:height frame)
+                  buf-size (* linesize height)
+                  i (next-int)]
+              (membrane.skia/save-image
+               (str "frames/frame" i ".png")
+               (skia/pixmap [uuid i]
+                            (dt/->byte-array
+                             (native-buffer/wrap-address (first (:data frame))
+                                                         buf-size))
+                            width height membrane.skia/kBGRA_8888_SkColorType membrane.skia/kOpaque_SkAlphaType 
+                            linesize))))
+           (frames-reducible 
+            {:type :avfilter
+             :output-format {:media-type :media-type/video
+                             :pixel-format :pixel-format/bgra}
+             :filter-name "hstack"
+             :inputs [{:type :concat
+                       :inputs [{:type :avfilter
+                                 :filter-name "vflip"
+                                 :inputs [{:file media-fname
+                                           :stream :video
+                                           :type :file}]}
+                                {:file media-fname
+                                 :stream :video
+                                 :type :file}]}
+                      {:type :concat
+                       :inputs [{:type :avfilter
+                                 :filter-name "gblur"
+                                 :opts {:sigma 20}
+                                 :inputs [{:file media-fname
+                                           :stream :video
+                                           :type :file}]}
+                                {:file media-fname
+                                 :stream :video
+                                 :type :file}]}]}
+            
+            
+            #_{:type :avfilter
+               :output-format {:media-type :media-type/video
+                               :pixel-format :pixel-format/bgra}
+               :filter-name "null"
+               :inputs [{:type :avfilter
+                         :filter-name "gblur"
+                         :opts {:sigma 100}
+                         :inputs [{:file media-fname
+                                   :start-timestamp (+ (* 2 3600) (* 60 29) 0)
+                                   :stream :video
+                                   :type :file}]}]}))))
+  (prn "done")
+  (Thread/sleep (long 5e3)))
