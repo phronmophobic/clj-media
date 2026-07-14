@@ -10,6 +10,7 @@
             com.phronemophobic.clj-media.avfilter
             [com.phronemophobic.membrandt.icon.ui :as icon.ui]
             [com.phronemophobic.membrandt :as ant]
+            [membrane.component.present :as present]
             [clojure.zip :as zip]
             [tech.v3.datatype.ffi :as dt-ffi]
             [tech.v3.datatype :as dt]
@@ -36,6 +37,49 @@
                         TargetDataLine
                         UnsupportedAudioFileException
                         Mixer)))
+
+;; There are plenty of improvements to be made
+;; - a new flow is created for each seek or play. we can reuse flows which will better keep track of state. it will
+;;   probably also be more efficient for seeks. we may need some method for either flushing channel buffers
+;;   or just use smaller buffers.
+;; - we special case `:file` type media parts. we probably want a better model for what media is seekable.
+;;   the special case code should also be more generic.
+;; - we do not yet support a volume knob
+;; - adding some generic avfilter stuff would be neat.
+;; - we do not yet support variable playback speeds.
+
+(defprotocol IGetBuf
+  (getbuf [_]))
+
+(defn ;;^:private
+  frame->pixmap [frame buf pixmap-id]
+  (let [linesize (first (:linesize frame))
+        {:keys [width height]} frame
+        buf-size (* linesize height)
+        buf (if (or (not buf)
+                    (< (count buf) buf-size))
+              (native-buffer/malloc buf-size)
+              buf)
+        _ (dt/copy! (native-buffer/wrap-address (first (:data frame))
+                                                buf-size)
+                    buf)
+        
+        pixmap (membrane.skia/pixmap pixmap-id
+                                     (proxy [Pointer com.phronemophobic.clj_media.impl.video_player.skia.IGetBuf]
+                                       [(.address (dt-ffi/->pointer buf))]
+                                       (getbuf []
+                                         ;; Important, must hold a reference to buf
+                                         ;; to keep it from being garbage collected.
+                                         buf)
+                                       #_(toString []
+                                         ;; just need to hole a reference to buf
+                                         (str "wrapping" buf)))
+                                     width
+                                     height
+                                     membrane.skia/kRGB_888x_SkColorType
+                                     membrane.skia/kOpaque_SkAlphaType
+                                     linesize)]
+    pixmap))
 
 (defn video-player-flow
   "Returns a flow ready to be presented. 
@@ -140,29 +184,33 @@
                                                         (let [buf (:buf state)
                                                               
                                                               frame (:frame msg)
-                                                              linesize (first (:linesize frame))
-                                                              {:keys [width height]} frame
-                                                              buf-size (* linesize height)
-                                                              buf (if (or (not buf)
-                                                                          (< (count buf) buf-size))
-                                                                    (native-buffer/malloc buf-size)
-                                                                    buf)
-                                                              _ (dt/copy! (native-buffer/wrap-address (first (:data frame))
-                                                                                                      buf-size)
-                                                                          buf)
-                                                              
                                                               pixmap-id (:pixmap-id state)
-                                                              pixmap (membrane.skia/pixmap pixmap-id
-                                                                                           (proxy [Pointer]
-                                                                                             [(.address (dt-ffi/->pointer buf))]
-                                                                                             (toString []
-                                                                                               ;; just need to hole a reference to buf
-                                                                                               (str "wrapping" buf)))
-                                                                                           width
-                                                                                           height
-                                                                                           membrane.skia/kRGB_888x_SkColorType
-                                                                                           membrane.skia/kOpaque_SkAlphaType
-                                                                                           linesize)
+                                                              pixmap (frame->pixmap frame buf pixmap-id)
+                                                              buf (getbuf (:buf pixmap))
+
+                                                              ;; linesize (first (:linesize frame))
+                                                              ;; {:keys [width height]} frame
+                                                              ;; buf-size (* linesize height)
+                                                              ;; buf (if (or (not buf)
+                                                              ;;             (< (count buf) buf-size))
+                                                              ;;       (native-buffer/malloc buf-size)
+                                                              ;;       buf)
+                                                              ;; _ (dt/copy! (native-buffer/wrap-address (first (:data frame))
+                                                              ;;                                         buf-size)
+                                                              ;;             buf)
+                                                              
+                                                              ;; pixmap-id (:pixmap-id state)
+                                                              ;; pixmap (membrane.skia/pixmap pixmap-id
+                                                              ;;                              (proxy [Pointer]
+                                                              ;;                                [(.address (dt-ffi/->pointer buf))]
+                                                              ;;                                (toString []
+                                                              ;;                                  ;; just need to hole a reference to buf
+                                                              ;;                                  (str "wrapping" buf)))
+                                                              ;;                              width
+                                                              ;;                              height
+                                                              ;;                              membrane.skia/kRGB_888x_SkColorType
+                                                              ;;                              membrane.skia/kOpaque_SkAlphaType
+                                                              ;;                              linesize)
                                                               
                                                               state (assoc state
                                                                            :pixmap-id (inc pixmap-id)
@@ -346,6 +394,8 @@
                               media)))]
         (recur (zip/next zip))))))
 
+;; TODO: this doesn't seem to work for .mkv files
+;; even though the duration is available in meta data
 (defn ^:private extract-duration [media]
   (when-let [root-file (loop [zip (media-zip media)]
                          (if (zip/end? zip)
@@ -368,29 +418,18 @@
                         streams)]
       max-duration)))
 
-(defeffect ::toggle-play [{:keys [$player $pm seek $timestamp $percent]}]
-  (assert (and $player $pm $timestamp $percent ))
+(defeffect ::toggle-play [{:keys [$player $pm seek $timestamp $percent media]}]
+  (assert (and $player $pm $timestamp $percent media))
   (dispatch! ::easel/enqueue
              {:f
               (fn []
                 (if-let [{:keys [flow stop*]} (dispatch! :get $player)]
-                  (do 
-                    (vreset! stop* true)
-                    (flow/stop flow)
-                      
-                    (dispatch! :set $player nil))
+                  (let [stopped (vswap! stop* not)] 
+                    (if stopped
+                      (flow/pause flow)
+                      (flow/resume flow)))
                   ;; else start
-                  (let [media (com.phronemophobic.clj-media.avfilter/null
-                               {}
-                               (com.phronemophobic.clj-media.avfilter/anull
-                                {}
-                                {:type :file
-                                 :file (io/file fname)}))
-                        media (if seek
-                                (set-start-percent media seek)
-                                media)
-                        
-                        duration (extract-duration media)
+                  (let [duration (extract-duration media)
                         stop* (volatile! false)
                         g (video-player-flow 
                            {:media media
@@ -412,8 +451,8 @@
                           (impl.flow/monitoring))
                       (flow/resume flow)))))}))
 
-(defeffect ::player-seek [{:keys [$player $pm seek $timestamp $percent]}]
-  (assert (and $player $pm $timestamp $percent seek))
+(defeffect ::player-seek [{:keys [$player $pm seek $timestamp $percent media]}]
+  (assert (and $player $pm $timestamp $percent seek media))
   (dispatch! ::easel/enqueue
              {:f
               (fn []
@@ -423,16 +462,9 @@
                     (flow/stop flow)
                     
                     (dispatch! :set $player nil)))
-                
-                (let [media (com.phronemophobic.clj-media.avfilter/null
-                             {}
-                             (com.phronemophobic.clj-media.avfilter/anull
-                              {:type :file
-                               :file (io/file fname)}))
-                      media (set-start-percent media seek)
-                      
-                      duration (extract-duration media)
+                (let [duration (extract-duration media)
                       stop* (volatile! false)
+                      media (set-start-percent media seek)
                       g (video-player-flow 
                          {:media media
                           :repaint! (fn [{:keys [pixmap timestamp]}]
@@ -441,17 +473,18 @@
                                         (let [percent (/ timestamp duration)]
                                           (dispatch! :set $percent percent))
                                         (dispatch! :set $pm pixmap)
-                                        (dispatch! :repaint!)))})]
-                  (let [flow (flow/create-flow g)]
-                    (dispatch! :set $player {:g g
-                                             :stop* stop*
-                                             :flow flow})
-                    (tap> g)
-                    (impl.flow/track-flow flow)
-                    
-                    (-> (flow/start flow)
-                        (impl.flow/monitoring))
-                    (flow/resume flow))))}))
+                                        (dispatch! :repaint!)))})
+                      flow (flow/create-flow g)]
+                  
+                  (dispatch! :set $player {:g g
+                                           :stop* stop*
+                                           :flow flow})
+                  (tap> g)
+                  (impl.flow/track-flow flow)
+                  
+                  (-> (flow/start flow)
+                      (impl.flow/monitoring))
+                  (flow/resume flow)))}))
 
 (defui media-controls [{:keys [width index player]}]
   (ui/flex-layout
@@ -461,26 +494,88 @@
        [[::toggle-play {}]])
      
      (icon.ui/icon {:name "play-circle"}))
-    
-    (ui/on
-     ::ant/update-number-slider
-     (fn [{:keys [slider mpos] :as m}]
-       (let [new-index (ant/calculate-slider-val slider mpos)]
-         [[::player-seek {:$player $player
-                          :new-index new-index}]]))
-     (ant/number-slider {:width width
-                         :integer? true
-                         :min 0
-                         :max width
-                         :value index}))
-    (ui/label (format "%.2f" (double index)))]
+    (ui/wrap-on
+     ;; only seek on mouse up
+     :mouse-move
+     (fn [handler mpos]
+       (let [intents (handler mpos)]
+         (into []
+                 (remove (fn [[type & _]]
+                           (= type ::player-seek)))
+                 intents)))
+     :mouse-event
+     (fn [handler pos button mouse-down? mods]
+       (let [intents (handler pos button mouse-down? mods)]
+         (if (not mouse-down?)
+           intents
+           (into []
+                 (remove (fn [[type & _]]
+                           (= type ::player-seek)))
+                 intents))))
+     (ui/on
+      ::ant/update-number-slider
+      (fn [{:keys [slider mpos] :as m}]
+        (let [new-index (ant/calculate-slider-val slider mpos)]
+          [[::player-seek {:$player $player
+                           :new-index new-index}]]))
+      (ant/number-slider {:width width
+                          :integer? true
+                          :min 0
+                          :max width
+                          :value index})))]
    {:direction :row
     :gap 21
     :align :center}))
 
+(defui fframe [{:keys [frame* ready?]}]
+  (when ready?
+    @frame*))
 
-(defui video-player [{}]
-  (let [[cw ch] (:membrane.stretch/container-size context)
+(defeffect ::load-first-frame [{:keys [media $frame]}]
+  (let [frame* (delay 
+                 (let [frames (impl.flow/frames-reducible 
+                               media :video
+                               {:format {:pixel-format :pixel-format/rgb0
+                                         :media-type :media-type/video}})
+                       pixmap (transduce (take 1)
+                                         (completing
+                                          (fn [_ frame]
+                                            (frame->pixmap (impl.model/raw-frame frame)
+                                                           nil 0)))
+                                         nil
+                                         frames)]
+                   (dispatch! :update $frame assoc :ready? true)
+                   pixmap))]
+    (dispatch! :update $frame (fn [f]
+                                (or f
+                                    (fframe {:ready? false
+                                             :frame* frame*})))))
+  (future
+    (-> (dispatch! :get $frame)
+        :frame*
+        deref)))
+
+(defui wrap-first-frame [{:keys [media]}]
+  (let [frame (get extra ::frame)]
+    (if frame
+      frame
+      (present/on-present
+       (fn []
+         [[::load-first-frame {:$frame $frame
+                               :media media}]])
+       nil))))
+
+(comment
+  
+  (dev/add-component-as-applet
+   #'wrap-first-frame
+   {:media {:type :file
+            :file "/Users/adrian/workspace/clj-media/symbolics.mp4"}})
+  ,)
+
+(defui video-player [{:keys [media size]}]
+  (let [[cw ch] (or size
+                    (:membrane.stretch/container-size context))
         controls-width (long (* 0.75 cw))
 
         pm (::pm extra)
@@ -496,6 +591,7 @@
                       [[::player-seek {:$player $player
                                        :$timestamp $timestamp
                                        :$percent $percent
+                                       :media media
                                        :seek new-percent
                                        :$pm $pm} ]]))
 
@@ -504,6 +600,7 @@
                     [[::toggle-play {:$player $player
                                      :$timestamp $timestamp
                                      :$percent $percent
+                                     :media media
                                      :seek percent
                                      :$pm $pm}]])
                   (media-controls {:width controls-width
@@ -515,10 +612,16 @@
         [screen-width screen-height] [(- cw pad)
                                       (- ch controls-height pad)]
 
-        [pw ph] (ui/bounds pm)
-        scale (if pm
-                
-                1)]
+        frame-view (or pm
+                       (wrap-first-frame {:media media}))
+        [pw ph] (ui/bounds frame-view)
+        
+        frame-view (if (and (pos? pw)
+                            (pos? ph))
+                     (let [scale (min (/ screen-width pw)
+                                      (/ screen-height ph))]
+                       (ui/scale scale scale frame-view))
+                     frame-view)]
     (ui/vertical-layout
      (ui/on :mouse-down
             (fn [_]
@@ -526,16 +629,11 @@
                                :$timestamp $timestamp
                                :$percent $percent
                                :seek percent
+                               :media media
                                :$pm $pm}]])
             (ui/fixed-bounds 
              [screen-width screen-height]
-             
-             (when (and pm
-                        (pos? pw)
-                        (pos? ph))
-               (let [scale (min (/ screen-width pw)
-                                (/ screen-height ph))]
-                 (ui/scale scale scale pm)))))
+             frame-view))
      controls)))
 
 
