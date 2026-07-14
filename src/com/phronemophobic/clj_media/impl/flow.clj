@@ -1897,19 +1897,21 @@
                    ch-layout)))
           (when (neg? (raw/av_frame_get_buffer frame 0)) 
             (throw (ex-info "Error allocating frame buffer.")))
+
+          (when (> (alength bytes)
+                   (first (:linesize frame)))
+            (throw (ex-info "Bytes are the wrong length for sample format."
+                            {:frame frame
+                             :bytes bytes
+                             :actual-size (native-buffer/native-buffer-byte-len bytes)
+                             :expected-length (first (:linesize frame))})))
           ;; linesize might not match the byte array size
           ;; since linesize is sometimes set for a particular alignment
           ;; I think line size is set by raw/av_frame_get_buffer
-          #_(when (> (alength bytes)
-                     (first (:linesize frame)))
-              (throw (ex-info "Bytes are the wrong length for sample format."
-                              {:frame m
-                               :bytes bytes
-                               :actual-size (native-buffer/native-buffer-byte-len bytes)
-                               :expected-length (first (:linesize frame))})))
           (dt/copy! bytes
                     (native-buffer/wrap-address (first (:data frame))
-                                                (first (:linesize frame)))))
+                                                (alength bytes)
+                                                #_(first (:linesize frame)))))
         
         :media-type/video
         (let [{:keys [pixel-format
